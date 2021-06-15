@@ -238,7 +238,7 @@ class Problem(object):
                 [self.name,self.type,self.td.num_bags,self.td.tree_width,self.td.num_orig_vertices],"id")[0]
             self.set_id(problem_id)
             logger.info("Created problem with ID %d", self.id)
-            
+
         def drop_tables():
             logger.debug("Dropping tables")
             self.db.drop_table("td_bag")
@@ -289,11 +289,12 @@ class Problem(object):
                 candidate_view = db.replace_dynamic_tabs(candidate_view)
                 db.create_view(f"td_node_{n.id}_candidate_v", candidate_view)
             ass_view = self.assignment_view(n)
+            #print ("verts:", len(n.vertices), "stored:", len(n.stored_vertices), ass_view)
             ass_view = db.replace_dynamic_tabs(ass_view)
             db.create_view(f"td_node_{n.id}_v", ass_view)
             if "parallel_setup" in self.kwargs and self.kwargs["parallel_setup"]:
                 db.close()
-            
+
         def insert_data():
             logger.debug("Inserting problem data")
             self.db.ignore_next_praefix(3)

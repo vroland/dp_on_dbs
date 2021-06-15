@@ -45,7 +45,7 @@ class DimacsReader(Reader):
             if line.startswith("p ") or line.startswith("s "):
                 line = line.split()
                 self.problem_solution_type = line[0]
-                self.format = line[1] 
+                self.format = line[1]
                 self._problem_vars = line[2:]
                 return lineno+1
             elif not line or self.is_comment(line):
@@ -54,7 +54,7 @@ class DimacsReader(Reader):
                 logger.warning("Invalid content in preamble at line %d: %s", lineno, line)
         logger.error("No type found in DIMACS file!")
         sys.exit(1)
-        
+
 class CnfReader(DimacsReader):
     def __init__(self):
         super().__init__()
@@ -75,14 +75,20 @@ class CnfReader(DimacsReader):
         if self.format != "cnf":
             logger.error("Not a cnf file!")
             sys.exit(1)
-        
+
         maxvar = 0
         for lineno, line in enumerate(lines):
+            line = line.strip()
             if not line or self.is_comment(line):
                 continue
             i = 1
-            if line.startswith("c ") or line == "c":
+            if line.startswith("c") or line == "c":
                 continue
+
+            # FIXME: ignoring weights
+            if line.startswith("w") or line == "w":
+                continue
+
             while line[-1] != '0':
                 if lineno + i >= len(lines):
                     logger.warning("Clause at line %d not terminated with 0", lineno)
@@ -92,6 +98,7 @@ class CnfReader(DimacsReader):
                 line += lines[lineno + i]
                 lines[lineno + i] = None
                 i += 1
+
             clause = [int(v) for v in line.split()[:-1]]
             self.clauses.append(clause)
             atoms = [abs(lit) for lit in clause]
@@ -139,7 +146,8 @@ class TdReader(DimacsReader):
         if self.format != "td":
             logger.error("Not a td file!")
             sys.exit(1)
-        
+
+        self.root = 1
         for lineno, line in enumerate(lines):
             if not line:
                 continue
@@ -147,7 +155,7 @@ class TdReader(DimacsReader):
             if self.is_comment(line):
                 line = line.split()
                 if len(line) > 2 and line[1] == 'r':
-                    self.root = int(line[2])
+                    self.root = 1 # FIXME: where does that come from ?int(line[2])
             elif line.startswith("b "):
                 line = line.split()
                 self.bags[int(line[1])] = [int(v) for v in line[2:]]

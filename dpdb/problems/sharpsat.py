@@ -19,7 +19,7 @@ class SharpSat(Problem):
 
     def td_node_extra_columns(self):
         return [("model_count","NUMERIC")]
-        
+
     def candidate_extra_cols(self,node):
         return ["{} AS model_count".format(
                 " * ".join(set([var2cnt(node,v) for v in node.vertices] +
@@ -29,8 +29,30 @@ class SharpSat(Problem):
     def assignment_extra_cols(self,node):
         return ["sum(model_count) AS model_count"]
 
+
+    def print_component_def(self, node):
+        vertice_set = set(node.vertices)
+        clauses = set()
+        for v in node.vertices:
+            for d in self.var_clause_dict[v]:
+                for key, val in d.items():
+                    if key.issubset(vertice_set):
+                        clauses.add(self.clause_index_dict[val])
+
+        print("cd", node.id, "-", " ".join(map(str, clauses)), "0")
+
     def filter(self,node):
+        #print (self.var_clause_dict, node.id)
+        self.print_component_def(node)
         return filter(self.var_clause_dict, node)
+
+    def print_define_clauses(self):
+
+        # define clauses
+        for id, c in enumerate(self.clauses):
+            id += 1
+            print("fd", id, "-", " ".join(map(str, c)))
+            self.clause_index_dict[frozenset(c)] = id
 
     def prepare_input(self, fname):
         input = CnfReader.from_file(fname)
@@ -38,7 +60,9 @@ class SharpSat(Problem):
         self.num_clauses = input.num_clauses
         self.clauses = input.clauses
         self.var_clause_dict = defaultdict(set)
+        self.clause_index_dict = defaultdict(set)
 
+        self.print_define_clauses()
         return cnf2primal(input.num_vars, input.clauses, self.var_clause_dict)
 
     def setup_extra(self):
@@ -64,7 +88,19 @@ class SharpSat(Problem):
         create_tables()
         insert_data()
 
+    def print_model_claims(self):
+        for node in self.td.nodes:
+            val_names = {True: "t", False: "f"}
+            # introduce / join?
+            if len(node.stored_vertices):
+                claim_id = node.id
+                print("mc", node.id, 0, claim_id)
+                print("mv", claim_id, " ".join(map(str, node.stored_vertices)), 0)
+                for model in self.db.select(f"td_node_{node.id}", ["*"], fetchall=True):
+                    print ("m ", claim_id, " ".join([val_names[model[node.vertices.index(v)]] for v in node.stored_vertices]), 0)
+
     def after_solve(self):
+        self.print_model_claims()
         root_tab = f"td_node_{self.td.root.id}"
         sum_count = self.db.replace_dynamic_tabs(f"(select coalesce(sum(model_count),0) from {root_tab})")
         self.db.ignore_next_praefix()

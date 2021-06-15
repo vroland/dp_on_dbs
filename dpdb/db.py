@@ -37,7 +37,7 @@ class DB(object):
         instance = cls()
         instance._pool = pool
         instance._conn = pool.getconn()
-        return instance 
+        return instance
 
     # we need this wrapper because conn object is required
     def __debug_query__ (self, query, params = []):
@@ -86,7 +86,18 @@ class DB(object):
                 return cur.fetchone()
         except pg.errors.AdminShutdown:
             logger.warning("Connection closed by admin")
-        
+
+    def exec_and_fetchall(self,q,p = []):
+        try:
+            self.__debug_query__(q,p)
+            with self._conn.cursor() as cur:
+                cur.execute(q,p)
+                self.last_rowcount = cur.rowcount
+                return cur.fetchall()
+        except pg.errors.AdminShutdown:
+            logger.warning("Connection closed by admin")
+
+
     def execute_ddl(self,q):
         try:
             self.__debug_query__(q)
@@ -159,7 +170,7 @@ class DB(object):
         select = self.replace_dynamic_tabs(select)
         self.insert_select(table, select)
 
-    def select(self, table, columns, where = None):
+    def select(self, table, columns, where = None, fetchall=False):
         q = sql.SQL("SELECT {} FROM {}").format(
                     sql.SQL(', ').join(sql.SQL(c) for c in columns),
                     self.__table_name__(table)
@@ -167,7 +178,10 @@ class DB(object):
         if where:
             q = sql.Composed([q,sql.SQL(" WHERE {}").format(sql.SQL(' AND ').join(map(sql.SQL,where)))])
 
-        return self.exec_and_fetch(q)
+        if fetchall:
+            return self.exec_and_fetchall(q)
+        else:
+            return self.exec_and_fetch(q)
 
     def create_select(self,table,ass_sql):
         q = sql.SQL("CREATE TABLE {} AS {}").format(
