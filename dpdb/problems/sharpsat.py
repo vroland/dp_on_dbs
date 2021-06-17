@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from dpdb.reader import CnfReader
 from dpdb.problem import *
+from dpdb.treedecomp import Node
 from .sat_util import *
 from psycopg2 import sql
 
@@ -39,6 +40,10 @@ class SharpSat(Problem):
         else:
             return []
 
+    def print_proof_line(self, l_type, l_id, l_count, l_data):
+        l = [l_type, l_id, l_count, *l_data, 0]
+        print(" ".join(map(str, l)))
+
     def print_component_def(self, id, node, recursive=False):
         clauses = set()
         nodes = node.children_recursive if recursive else [node]
@@ -54,7 +59,7 @@ class SharpSat(Problem):
                         clauses.add(self.clause_index_dict[val])
 
         print("c", ["bag", "subtree"][int(recursive)], "formula for", node.id)
-        print("cd", id, "-", " ".join(map(str, clauses)), "0")
+        self.print_proof_line("cd", id, 0, clauses)
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -65,7 +70,7 @@ class SharpSat(Problem):
         # define clauses
         for id, c in enumerate(self.clauses):
             id += 1
-            print("f", id, "-", " ".join(map(str, c)))
+            self.print_proof_line("f", id, 0, c)
             self.clause_index_dict[frozenset(c)] = id
 
 
@@ -120,11 +125,15 @@ class SharpSat(Problem):
                 elif num_children == 0:
                     print ("c", "Leaf Node")
 
-                q = "{} {}".format(self.assignment_select(node, do_projection=False), self.filter(node))
+                pseudo_leaf = Node(node.id, node.vertices)
+                pseudo_leaf.parent = node.parent
+
+                q = "{} {}".format(self.assignment_select(pseudo_leaf, do_projection=False), self.filter(node))
                 q = self.db.replace_dynamic_tabs(q)
 
+                print ("c", q)
                 for model in self.db.exec_and_fetchall(sql.SQL(q)):
-                    print ("m", claim_id, " ".join(map(str, [v if model[node.vertices.index(v)] else -v for v in node.vertices])), 0)
+                    self.print_proof_line("m", claim_id, 0, [v if model[node.vertices.index(v)] else -v for v in node.vertices])
 
                 # we need a projection claim as well
                 if set(node.vertices) != set(node.stored_vertices):
@@ -132,7 +141,7 @@ class SharpSat(Problem):
                     for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
                         formula_id = self.subtree_formula_id(node)
                         lm = list(model)
-                        print ("p", formula_id, lm[0], *[var if v else -var for v, var in zip(lm[1:], node.stored_vertices)], 0)
+                        self.print_proof_line("p", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
 
             # Join Node
             elif num_children > 1:
@@ -142,7 +151,7 @@ class SharpSat(Problem):
                 for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
                     formula_id = self.subtree_formula_id(node)
                     lm = list(model)
-                    print ("j", formula_id, lm[0], *[var if v else -var for v, var in zip(lm[1:], node.stored_vertices)], 0)
+                    self.print_proof_line("j", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
 
     def after_solve(self):
         self.print_model_claims()
