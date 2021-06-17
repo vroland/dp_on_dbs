@@ -5,6 +5,7 @@ from collections import defaultdict
 from dpdb.reader import CnfReader
 from dpdb.problem import *
 from .sat_util import *
+from psycopg2 import sql
 
 logger = logging.getLogger(__name__)
 
@@ -26,24 +27,37 @@ class SharpSat(Problem):
                                [node2cnt(n) for n in node.children])) if node.vertices or node.children else "1"
                 )]
 
-    def assignment_extra_cols(self,node):
-        return ["sum(model_count) AS model_count"]
+    def bag_formula_id(self, node):
+        return node.id
 
+    def subtree_formula_id(self, node):
+        return node.id + self.td.num_bags + 1
 
-    def print_component_def(self, node):
-        vertice_set = set(node.vertices)
+    def assignment_extra_cols(self,node, do_projection=True):
+        if do_projection:
+            return ["sum(model_count) AS model_count"]
+        else:
+            return []
+
+    def print_component_def(self, id, node, recursive=False):
         clauses = set()
-        for v in node.vertices:
+        nodes = node.children_recursive if recursive else [node]
+        vertices = []
+        for n in nodes:
+            vertices.extend(n.vertices)
+
+        vertice_set = set(vertices)
+        for v in vertices:
             for d in self.var_clause_dict[v]:
                 for key, val in d.items():
                     if key.issubset(vertice_set):
                         clauses.add(self.clause_index_dict[val])
 
-        print("cd", node.id, "-", " ".join(map(str, clauses)), "0")
+        print("c", ["bag", "subtree"][int(recursive)], "formula for", node.id)
+        print("cd", id, "-", " ".join(map(str, clauses)), "0")
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
-        self.print_component_def(node)
         return filter(self.var_clause_dict, node)
 
     def print_define_clauses(self):
@@ -51,8 +65,9 @@ class SharpSat(Problem):
         # define clauses
         for id, c in enumerate(self.clauses):
             id += 1
-            print("fd", id, "-", " ".join(map(str, c)))
+            print("f", id, "-", " ".join(map(str, c)))
             self.clause_index_dict[frozenset(c)] = id
+
 
     def prepare_input(self, fname):
         input = CnfReader.from_file(fname)
@@ -91,13 +106,43 @@ class SharpSat(Problem):
     def print_model_claims(self):
         for node in self.td.nodes:
             val_names = {True: "t", False: "f"}
-            # introduce / join?
-            if len(node.stored_vertices):
-                claim_id = node.id
-                print("mc", node.id, 0, claim_id)
-                print("mv", claim_id, " ".join(map(str, node.stored_vertices)), 0)
-                for model in self.db.select(f"td_node_{node.id}", ["*"], fetchall=True):
-                    print ("m ", claim_id, " ".join([val_names[model[node.vertices.index(v)]] for v in node.stored_vertices]), 0)
+
+            num_children = len(node.children)
+
+            self.print_component_def(self.bag_formula_id(node), node)
+            self.print_component_def(self.subtree_formula_id(node), node, recursive=True)
+
+            # IF / leaf
+            if num_children <= 1:
+                claim_id = self.bag_formula_id(node)
+                if num_children == 1:
+                    print ("c", "I/F node")
+                elif num_children == 0:
+                    print ("c", "Leaf Node")
+
+                q = "{} {}".format(self.assignment_select(node, do_projection=False), self.filter(node))
+                q = self.db.replace_dynamic_tabs(q)
+
+                for model in self.db.exec_and_fetchall(sql.SQL(q)):
+                    print ("m", claim_id, " ".join(map(str, [v if model[node.vertices.index(v)] else -v for v in node.vertices])), 0)
+
+                # we need a projection claim as well
+                if set(node.vertices) != set(node.stored_vertices):
+                    partial_assignment = node.stored_vertices
+                    for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
+                        formula_id = self.subtree_formula_id(node)
+                        lm = list(model)
+                        print ("p", formula_id, lm[0], *[var if v else -var for v, var in zip(lm[1:], node.stored_vertices)], 0)
+
+            # Join Node
+            elif num_children > 1:
+                print ("c", "join of", num_children)
+                print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
+                partial_assignment = node.stored_vertices
+                for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
+                    formula_id = self.subtree_formula_id(node)
+                    lm = list(model)
+                    print ("j", formula_id, lm[0], *[var if v else -var for v, var in zip(lm[1:], node.stored_vertices)], 0)
 
     def after_solve(self):
         self.print_model_claims()

@@ -30,7 +30,7 @@ class TreeDecomp(object):
                             leaf = False
                 if leaf:
                     self.leafs.append(new_node)
-            
+
         visited = set([root])
         add_nodes(root)
 
@@ -61,6 +61,16 @@ class Node(object):
 
     def __repr__(self):
         return "<id: {0} vertices: {1} #children: {2}>".format(self.id, self.vertices, len(self.children))
+
+    @property
+    def children_recursive(self):
+        if self.is_leaf():
+            return [self]
+        else:
+            l = []
+            for c in self.children:
+                l.extend(c.children_recursive)
+            return l
 
     @property
     def stored_vertices(self):

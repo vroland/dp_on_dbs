@@ -68,7 +68,7 @@ class Problem(object):
     td = None
 
     def __init__(self, name, pool, max_worker_threads=12,
-            candidate_store="cte", limit_result_rows=None,
+            candidate_store="table", limit_result_rows=None,
             randomize_rows=False, **kwargs):
         self.name = name
         self.pool = pool
@@ -168,10 +168,11 @@ class Problem(object):
 
         return q
 
-    def assignment_select(self,node):
-        sel_list = ",".join([var2col(v) if v in node.stored_vertices
+    def assignment_select(self,node, do_projection=True):
+        projected_vars = node.stored_vertices if do_projection else node.vertices
+        sel_list = ",".join([var2col(v) if v in projected_vars
                                         else "null::{} {}".format(self.td_node_column_def(v)[1],var2col(v)) for v in node.vertices])
-        extra_cols = self.assignment_extra_cols(node)
+        extra_cols = self.assignment_extra_cols(node, do_projection)
         if extra_cols:
             sel_list += "{}{}".format(", " if sel_list else "", ",".join(extra_cols))
 
@@ -289,8 +290,8 @@ class Problem(object):
                 candidate_view = db.replace_dynamic_tabs(candidate_view)
                 db.create_view(f"td_node_{n.id}_candidate_v", candidate_view)
             ass_view = self.assignment_view(n)
-            #print ("verts:", len(n.vertices), "stored:", len(n.stored_vertices), ass_view)
             ass_view = db.replace_dynamic_tabs(ass_view)
+            #print (n.id, "verts:", len(n.vertices), "stored:", len(n.stored_vertices), ass_view)
             db.create_view(f"td_node_{n.id}_v", ass_view)
             if "parallel_setup" in self.kwargs and self.kwargs["parallel_setup"]:
                 db.close()
