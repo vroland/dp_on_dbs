@@ -52,12 +52,18 @@ class SharpSat(Problem):
             vertices.extend(n.vertices)
 
         vertice_set = set(vertices)
+        for v in vertices:
+            for d in self.var_clause_dict[v]:
+                for key, val in d.items():
+                    if key.issubset(vertice_set):
+                        clauses.add(self.clause_index_dict[val])
+
         print("c", ["bag", "subtree"][int(recursive)], "formula for", node.id)
         # component variables are needed, as component is not uniquely
         # described by clauses
         # -> Are clause definitions needed?
         self.print_proof_line("cv", id, 0, sorted(vertice_set))
-        #self.print_proof_line("cd", id, 0, clauses)
+        self.print_proof_line("cd", id, 0, clauses)
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)

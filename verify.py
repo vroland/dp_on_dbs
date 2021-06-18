@@ -14,8 +14,6 @@ component_projections = defaultdict(list)
 component_clauses = {}
 
 def parse_proof(input_file):
-    global component_clauses
-
     for line in input_file.readlines():
         split = line.strip().split(" ")
         if split[0] == "c":
@@ -33,18 +31,22 @@ def parse_proof(input_file):
         elif l_type == "cv":
             component_variables[l_id] = set(l_data)
 
+        elif l_type == "cd":
+            component_clauses[l_id] = set([clauses_dict[c] for c in l_data])
+
         elif l_type == "m":
             component_models[l_id].append(frozenset(l_data))
 
         elif l_type == "p":
             component_projections[l_id].append((l_count, l_data))
 
-    def get_component_clauses(component_id):
-        variables = component_variables[component_id]
-        clauses = filter(lambda clause: set([abs(l) for l in clause]) <= variables, clauses_dict.values())
-        return set(clauses)
+    # true for DP, but not for component caching
+    #def get_component_clauses(component_id):
+    #    variables = component_variables[component_id]
+    #    clauses = filter(lambda clause: set([abs(l) for l in clause]) <= variables, clauses_dict.values())
+    #    return set(clauses)
 
-    component_clauses = { c_id : get_component_clauses(c_id) for c_id in component_variables.keys() }
+    #component_clauses = { c_id : get_component_clauses(c_id) for c_id in component_variables.keys() }
 
 def check_model(component_id, model):
     model_set = set(model)
