@@ -31,9 +31,49 @@ def parse_proof(input_file):
         elif l_type == "m":
             component_models[l_id].append(l_data)
 
+def check_model(component_id, model):
+    model_set = set(model)
+    for clause_id in component_dict[component_id]:
+        clause = clauses_dict[clause_id]
+        if not model_set & set(clause):
+            return False
+    return True
+
 def map_lit(variable_mapping, l):
     var = variable_mapping[abs(l)]
     return var if l > 0 else -var
+
+def check_model_claim(component_id):
+    clauses = []
+    # print bag formula
+    for clause_id in component_dict[component]:
+        clauses.append(clauses_dict[clause_id])
+
+    # print negated models -> -(a ^ b) => (-a or -b)
+    for model in component_models[component]:
+        if not check_model(component, model):
+            print ("model claim", component, "failed:", model, "is no model.")
+            sys.exit(1)
+        clauses.append([-l for l in model])
+
+
+    # set of all original variable names
+    variables = set()
+    for c in clauses:
+        variables = variables | set([abs(l) for l in c])
+
+    variable_mapping = { v : i + 1 for i, v in enumerate(variables)}
+
+    problem_string = " ".join(map(str, ["p", "cnf", len(variables), len(clauses)])) + "\n"
+    for clause in clauses:
+        problem_string += " ".join(map(str, [map_lit(variable_mapping, l) for l in clause] + [0])) + "\n"
+
+    result = subprocess.run(["minisat", "-verb=0", "-strict"], input=problem_string, capture_output=True, encoding="utf-8")
+    last_line = result.stdout.strip().split("\n")[-1].strip()
+    if not last_line == "UNSATISFIABLE":
+        print ("model claim", component, "failed:", last_line, file=sys.stderr)
+        print (problem_string)
+        sys.exit(2)
 
 if __name__ == "__main__":
     parse_proof(sys.stdin)
@@ -41,33 +81,7 @@ if __name__ == "__main__":
     print (len(component_dict), "component formulae.", file=sys.stderr)
     print (len(component_models), "model claims.", file=sys.stderr)
 
-    for component, models in component_models.items():
-        clauses = []
-        # print bag formula
-        for clause_id in component_dict[component]:
-            clauses.append(clauses_dict[clause_id])
-
-        # print negated models -> -(a ^ b) => (-a or -b)
-        for model in component_models[component]:
-            clauses.append([-l for l in model])
-
-
-        # set of all original variable names
-        variables = set()
-        for c in clauses:
-            variables = variables | set([abs(l) for l in c])
-
-        variable_mapping = { v : i + 1 for i, v in enumerate(variables)}
-
-        problem_string = " ".join(map(str, ["p", "cnf", len(variables), len(clauses)])) + "\n"
-        for clause in clauses:
-            problem_string += " ".join(map(str, [map_lit(variable_mapping, l) for l in clause] + [0])) + "\n"
-
-        result = subprocess.run(["minisat", "-verb=0", "-strict"], input=problem_string, capture_output=True, encoding="utf-8")
-        last_line = result.stdout.strip().split("\n")[-1].strip()
-        if not last_line == "UNSATISFIABLE":
-            print ("model claim", component, "failed:", last_line, file=sys.stderr)
-            print (problem_string)
-            sys.exit(1)
+    for component in component_models.keys():
+        check_model_claim(component)
 
     print ("model claims verified (according to minisat).", file=sys.stderr)
