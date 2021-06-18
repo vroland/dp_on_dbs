@@ -67,7 +67,7 @@ class Node(object):
         if self.is_leaf():
             return [self]
         else:
-            l = []
+            l = [self]
             for c in self.children:
                 l.extend(c.children_recursive)
             return l

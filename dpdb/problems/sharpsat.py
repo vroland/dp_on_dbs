@@ -52,14 +52,12 @@ class SharpSat(Problem):
             vertices.extend(n.vertices)
 
         vertice_set = set(vertices)
-        for v in vertices:
-            for d in self.var_clause_dict[v]:
-                for key, val in d.items():
-                    if key.issubset(vertice_set):
-                        clauses.add(self.clause_index_dict[val])
-
         print("c", ["bag", "subtree"][int(recursive)], "formula for", node.id)
-        self.print_proof_line("cd", id, 0, clauses)
+        # component variables are needed, as component is not uniquely
+        # described by clauses
+        # -> Are clause definitions needed?
+        self.print_proof_line("cv", id, 0, sorted(vertice_set))
+        #self.print_proof_line("cd", id, 0, clauses)
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -121,7 +119,7 @@ class SharpSat(Problem):
             if num_children <= 1:
                 claim_id = self.bag_formula_id(node)
                 if num_children == 1:
-                    print ("c", "I/F node")
+                    print ("c", "I/F node", node.id, "is parent of", node.children[0].id)
                 elif num_children == 0:
                     print ("c", "Leaf Node")
 
@@ -145,7 +143,7 @@ class SharpSat(Problem):
 
             # Join Node
             elif num_children > 1:
-                print ("c", "join of", num_children)
+                print ("c", node.id, "join of", [n.id for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
                 partial_assignment = node.stored_vertices
                 for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
