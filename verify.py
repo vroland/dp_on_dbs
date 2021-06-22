@@ -91,28 +91,70 @@ def check_model_claims(component_id):
         print (problem_string)
         sys.exit(2)
 
-def largest_subprojection(component_id):
-    covered_clauses = component_clauses[component_id]
-    component_vars = component_variables[component_id]
+def largest_subprojection(component_id, pool=None, covered_clauses=None, covered_vars=None):
+    if pool is None:
+        pool=(set(component_projections.keys()) | set(component_joins.keys()))
+
+    # clauses and variables used for fitness measure
+    if covered_clauses is None:
+        covered_clauses = component_clauses[component_id]
+    if covered_vars is None:
+        covered_vars = component_variables[component_id]
 
     # find sub-projection
     best_subprojection = -1
     # tuple of (matching clauses, matching variables)
     best_subprojection_value = (-1, -1)
-    for c_id in set(component_projections.keys()) | set(component_joins.keys()):
+    for c_id in pool:
         if c_id == component_id:
             continue
 
         comp_vars = component_variables[c_id]
         comp_clauses = component_clauses[c_id]
         common = comp_clauses & covered_clauses
-        comp_value = (len(common), len(component_vars & comp_vars))
-        if comp_clauses <= covered_clauses and comp_vars <= component_vars and comp_value > best_subprojection_value:
+        comp_value = (len(common), len(covered_vars & comp_vars))
+        if comp_clauses <= component_clauses[component_id] and comp_vars <= component_variables[component_id] and comp_value > best_subprojection_value:
 
             best_subprojection = c_id
             best_subprojection_value = comp_value
 
     return best_subprojection
+
+def clause_index_list(clauses):
+    cl = list(clauses_dict.values())
+    return [cl.index(c) + 1 for c in clauses]
+
+# this is actually the set cover problem, we're using a greedy algorithm here
+def find_covering_components(component_id):
+    pool=(set(component_projections.keys()) | set(component_joins.keys()))
+    children = []
+
+    comp_vars = component_variables[component_id]
+    comp_clauses = component_clauses[component_id]
+    child_vars = set()
+    child_clauses = set()
+    while pool and (child_clauses != comp_clauses or child_vars != comp_vars):
+        clauses_left = comp_clauses - child_clauses
+        vars_left = comp_vars - child_vars
+        largest = largest_subprojection(component_id, pool, clauses_left, vars_left)
+        #print ("it", component_id, largest, children, clause_index_list(clauses_left), vars_left)
+        # the trivial component is returned
+        if largest == -1:
+            assert clauses_left or vars_left
+            print ("cannot verify", component_id, ": clauses", clause_index_list(clauses_left), "and vars", vars_left, "not covered.")
+            return None
+
+        children.append(largest)
+        pool.remove(largest)
+        child_vars |= component_variables[largest]
+        child_clauses |= component_clauses[largest]
+
+    print ("children for", component_id, children)
+
+
+def check_join_claim(component_id):
+    find_covering_components(component_id)
+    return True
 
 def check_projection(comp_proj, comp_source, comp_bridge):
     source_assignments = component_projections[comp_source] if comp_source in component_projections else component_joins[comp_source]
@@ -183,6 +225,8 @@ if __name__ == "__main__":
     print (len(clauses_dict), "clauses.", file=sys.stderr)
     print (len(component_variables), "components.", file=sys.stderr)
     print (len(component_models), "model claims.", file=sys.stderr)
+    print (len(component_projections), "component projection claims.", file=sys.stderr)
+    print (len(component_joins), "component join claims.", file=sys.stderr)
 
     for component in component_models.keys():
         check_model_claims(component)
@@ -191,8 +235,14 @@ if __name__ == "__main__":
 
     for component, l in component_projections.items():
         checked = check_projection_claim(component)
-        if checked:
-            print ("projection claim", component, "verified.")
-        else:
+        if not checked:
             print ("projection claim", component, "failed!")
+            sys.exit(1)
+
+    print ("projection claims verified.")
+
+    for component, l in component_joins.items():
+        checked = check_join_claim(component)
+        if not checked:
+            print ("join claim", component, "failed!")
             sys.exit(1)

@@ -1,5 +1,6 @@
 # -*- coding: future_fstrings -*-
 import logging
+import sys
 from collections import defaultdict
 
 from dpdb.reader import CnfReader
@@ -112,6 +113,27 @@ class SharpSat(Problem):
         create_tables()
         insert_data()
 
+    def model_claim_query_of(self, node):
+        pseudo_leaf = Node(node.id, node.vertices)
+        pseudo_leaf.parent = node.parent
+
+        q = "{} {}".format(self.assignment_select(pseudo_leaf, do_projection=False), self.filter(node))
+        return self.db.replace_dynamic_tabs(q)
+
+    def print_model_claim_of(self, node):
+        claim_id = self.bag_formula_id(node)
+        q = self.model_claim_query_of(node)
+
+        print ("c", q)
+        for model in self.db.exec_and_fetchall(sql.SQL(q)):
+            self.print_proof_line("m", claim_id, 0, [v if model[node.vertices.index(v)] else -v for v in node.vertices])
+
+    def print_projection_claim_of(self, node, formula_id):
+        partial_assignment = node.stored_vertices
+        for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
+            lm = list(model)
+            self.print_proof_line("p", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
+
     def print_model_claims(self):
         for node in self.td.nodes:
             val_names = {True: "t", False: "f"}
@@ -123,33 +145,41 @@ class SharpSat(Problem):
 
             # IF / leaf
             if num_children <= 1:
-                claim_id = self.bag_formula_id(node)
                 if num_children == 1:
                     print ("c", "I/F node", node.id, "is parent of", node.children[0].id)
                 elif num_children == 0:
                     print ("c", "Leaf Node")
 
-                pseudo_leaf = Node(node.id, node.vertices)
-                pseudo_leaf.parent = node.parent
-
-                q = "{} {}".format(self.assignment_select(pseudo_leaf, do_projection=False), self.filter(node))
-                q = self.db.replace_dynamic_tabs(q)
-
-                print ("c", q)
-                for model in self.db.exec_and_fetchall(sql.SQL(q)):
-                    self.print_proof_line("m", claim_id, 0, [v if model[node.vertices.index(v)] else -v for v in node.vertices])
+                self.print_model_claim_of(node)
 
                 # we need a projection claim as well
                 if set(node.vertices) != set(node.stored_vertices):
-                    partial_assignment = node.stored_vertices
-                    for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
-                        formula_id = self.subtree_formula_id(node)
-                        lm = list(model)
-                        self.print_proof_line("p", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
+                    self.print_projection_claim_of(node, self.subtree_formula_id(node))
 
             # Join Node
             elif num_children > 1:
-                print ("c", node.id, "join of", [n.id for n in node.children])
+                child_vars = []
+                for child in node.children:
+                    child_vars.extend(child.vertices)
+
+                introduce_vars = set(node.vertices) - set(child_vars)
+                # node as additional introduce vars
+                if introduce_vars:
+                    self.print_model_claim_of(node)
+                    # add projection of the bag formula
+                    partial_assignment = node.stored_vertices
+                    pseudo_leaf = Node(node.id, node.vertices)
+                    pseudo_leaf.parent = node.parent
+
+                    q = self.assignment_view(pseudo_leaf)
+                    q = self.db.replace_dynamic_tabs(q)
+
+                    print ("c", q)
+                    for model in self.db.exec_and_fetchall(sql.SQL(q)):
+                        l = list(model)
+                        self.print_proof_line("p", self.bag_formula_id(node), l[-1], [var if v else -var for v, var in zip(l[:-1], node.vertices) if v is not None])
+
+                print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
                 partial_assignment = node.stored_vertices
                 for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
