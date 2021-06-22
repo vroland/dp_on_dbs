@@ -46,25 +46,21 @@ class SharpSat(Problem):
         print(" ".join(map(str, l)))
 
     def print_component_def(self, id, node, recursive=False):
-        clauses = set()
         nodes = node.children_recursive if recursive else [node]
         vertices = []
         for n in nodes:
             vertices.extend(n.vertices)
 
         vertice_set = set(vertices)
-        for v in vertices:
-            for d in self.var_clause_dict[v]:
-                for key, val in d.items():
-                    if key.issubset(vertice_set):
-                        clauses.add(self.clause_index_dict[val])
+        clauses = covering_clauses(vertice_set, self.var_clause_dict)
+        clause_idx = [self.clause_index_dict[c] for c in clauses]
 
         print("c", ["bag", "subtree"][int(recursive)], "formula for", node.id)
         # component variables are needed, as component is not uniquely
         # described by clauses
         # -> Are clause definitions needed?
         self.print_proof_line("cv", id, 0, sorted(vertice_set))
-        self.print_proof_line("cd", id, 0, clauses)
+        self.print_proof_line("cd", id, 0, clause_idx)
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -162,9 +158,14 @@ class SharpSat(Problem):
                 for child in node.children:
                     child_vars.extend(child.vertices)
 
+                child_clauses = []
+                for child in node.children:
+                    child_clauses.extend(covering_clauses(set(child.vertices), self.var_clause_dict))
+                missing_clauses = covering_clauses(set(node.vertices), self.var_clause_dict) - set(child_clauses)
+
                 introduce_vars = set(node.vertices) - set(child_vars)
-                # node as additional introduce vars
-                if introduce_vars:
+                # node has additional introduce vars or clauses
+                if introduce_vars or missing_clauses:
                     self.print_model_claim_of(node)
                     # add projection of the bag formula
                     partial_assignment = node.stored_vertices

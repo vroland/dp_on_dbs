@@ -33,15 +33,18 @@ def lit2expr (lit):
     else:
         return "NOT {}".format(lit2var(lit))
 
-def filter(clauses, node):
-    vertice_set = set(node.vertices)
+def covering_clauses(vertice_set, var_clause_dict):
     cur_cl = set()
-    for v in node.vertices:
-        candidates = clauses[v]
+    for v in vertice_set:
+        candidates = var_clause_dict[v]
         for d in candidates:
             for key, val in d.items():
                 if key.issubset(vertice_set):
                     cur_cl.add(val)
+    return cur_cl
+
+def filter(var_clause_dict, node):
+    cur_cl = covering_clauses(set(node.vertices), var_clause_dict)
 
     if len(cur_cl) > 0:
         return "WHERE {0}".format(
