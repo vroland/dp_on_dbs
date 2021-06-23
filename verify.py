@@ -156,11 +156,15 @@ def check_join_claim(component_id):
     find_covering_components(component_id)
     return True
 
+def assignment_compatible(a1, a2):
+    return len(a1 | a2) == len(set([abs(l) for l in a1]) | set([abs(l) for l in a2]))
+
 def check_projection(comp_proj, comp_source, comp_bridge):
     source_assignments = component_projections[comp_source] if comp_source in component_projections else component_joins[comp_source]
 
     source_vars = component_variables[comp_source]
 
+    counted_models = set()
     for c_proj, a_proj in component_projections[comp_proj]:
         c_proj_check = 0
         for bridge_assignment in component_models[comp_bridge]:
@@ -175,10 +179,19 @@ def check_projection(comp_proj, comp_source, comp_bridge):
                 # this assignment fits to the restricted bridge assignment
                 if restricted_bridge_assignment <= a_source:
                     c_proj_check += c_source
+                    counted_models.add(bridge_assignment)
 
         if c_proj_check != c_proj:
             print ("check for", comp_proj, comp_source, "failed:", *a_proj, ":", c_proj_check, "<->", c_proj)
             return False
+
+    # there are models left that where not projected
+    for model in set(component_models[comp_bridge]) - counted_models:
+        for _, a_source in source_assignments:
+            if assignment_compatible(model, a_source):
+                print ("incomplete projection", comp_proj, "model", model, "not covered.")
+                return False
+
     return True
 
 def check_projection_claim(component_id):
