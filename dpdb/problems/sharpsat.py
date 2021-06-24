@@ -167,18 +167,16 @@ class SharpSat(Problem):
                 # node has additional introduce vars or clauses
                 if introduce_vars or missing_clauses:
                     self.print_model_claim_of(node)
-                    # add projection of the bag formula
-                    partial_assignment = node.stored_vertices
-                    pseudo_leaf = Node(node.id, node.vertices)
-                    pseudo_leaf.parent = node.parent
 
-                    q = self.assignment_view(pseudo_leaf)
-                    q = self.db.replace_dynamic_tabs(q)
+                    # pseudo node must not be projected,
+                    # otherwise we could wrongly include
+                    # solutions of other children
+                    q = self.model_claim_query_of(node)
 
                     print ("c", q)
                     for model in self.db.exec_and_fetchall(sql.SQL(q)):
                         l = list(model)
-                        self.print_proof_line("p", self.bag_formula_id(node), l[-1], [var if v else -var for v, var in zip(l[:-1], node.vertices) if v is not None])
+                        self.print_proof_line("p", self.bag_formula_id(node), 1, [var if v else -var for v, var in zip(l, node.vertices) if v is not None])
 
                 print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)

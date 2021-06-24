@@ -149,11 +149,41 @@ def find_covering_components(component_id):
         child_vars |= component_variables[largest]
         child_clauses |= component_clauses[largest]
 
-    print ("children for", component_id, children)
+    return children
 
+
+def get_projection_or_join(component_id):
+    return component_projections.get(component_id, component_joins.get(component_id))
 
 def check_join_claim(component_id):
-    find_covering_components(component_id)
+    subcomponents = find_covering_components(component_id)
+
+    join_table = [(c, set(a)) for c, a in get_projection_or_join(subcomponents[0])]
+    for comp_id in subcomponents[1:]:
+        new_table = []
+        for c_sub, a_sub in get_projection_or_join(comp_id):
+            for c, a in join_table:
+                if assignment_compatible(a_sub, a):
+                    new_table.append((c_sub * c, a | a_sub))
+        join_table = new_table
+
+    projections_used = set()
+    for c_join, a_join in component_joins[component_id]:
+        c_join_check = 0
+        for c, a in join_table:
+            if assignment_compatible(a, a_join):
+                c_join_check += c
+                projections_used.add(frozenset(a))
+
+        if c_join_check != c_join:
+            print ("check for join", component_id, subcomponents, "failed:", *a_join, ":", c_join_check, "<->", c_join)
+            return False
+
+    # there are unused assignments in the join table
+    if set([frozenset(a) for c, a in join_table]) - projections_used:
+        print ("join claim", component_id, "incomplete!")
+        return False
+
     return True
 
 def assignment_compatible(a1, a2):
@@ -172,17 +202,14 @@ def check_projection(comp_proj, comp_source, comp_bridge):
             if not a_proj <= bridge_assignment:
                 continue
 
-            # bridge assignment restricted to source component variables
-            restricted_bridge_assignment = set([l for l in bridge_assignment if abs(l) in source_vars])
-
             for c_source, a_source in source_assignments:
                 # this assignment fits to the restricted bridge assignment
-                if restricted_bridge_assignment <= a_source:
+                if assignment_compatible(bridge_assignment, a_source):
                     c_proj_check += c_source
                     counted_models.add(bridge_assignment)
 
         if c_proj_check != c_proj:
-            print ("check for", comp_proj, comp_source, "failed:", *a_proj, ":", c_proj_check, "<->", c_proj)
+            print ("check for projection", comp_proj, comp_source, "failed:", *a_proj, ":", c_proj_check, "<->", c_proj)
             return False
 
     # there are models left that where not projected
@@ -259,3 +286,4 @@ if __name__ == "__main__":
         if not checked:
             print ("join claim", component, "failed!")
             sys.exit(1)
+        print ("join claim for", component, "verified.")
