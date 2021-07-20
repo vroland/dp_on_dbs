@@ -12,6 +12,10 @@ component_variables = {}
 component_models = defaultdict(list)
 # list of projection claims per component id
 component_projections = defaultdict(list)
+# list of local ("model") variables by component id
+component_local_variables = {}
+# list of local ("model") clauses by component id
+component_local_clauses = {}
 # clauses by covered by component
 component_clauses = {}
 # list of join claims by component
@@ -43,8 +47,14 @@ def parse_proof(input_file):
         elif l_type == "cv":
             component_variables[l_id] = frozenset(l_data)
 
+        elif l_type == "lv":
+            component_local_variables[l_id] = frozenset(l_data)
+
         elif l_type == "cd":
             component_clauses[l_id] = frozenset([clauses_dict[c] for c in l_data])
+
+        elif l_type == "ld":
+            component_local_clauses[l_id] = frozenset([clauses_dict[c] for c in l_data])
 
         elif l_type == "m":
             component_models[l_id].append(frozenset(l_data))
@@ -64,9 +74,9 @@ def parse_proof(input_file):
 
 def check_model(component_id, model):
     model_set = set(model)
-    if set([abs(l) for l in model]) != component_variables[component_id]:
+    if not set([abs(l) for l in model]) == component_local_variables[component_id]:
         return False
-    for clause in component_clauses[component_id]:
+    for clause in component_local_clauses[component_id]:
         if not model_set & set(clause):
             return False
     return True
@@ -81,7 +91,7 @@ def map_clause(variable_mapping, clause):
 
 
 def check_projection_completeness(component_id, projection_assignment):
-    clauses = set(component_clauses[component])
+    clauses = set(component_local_clauses[component])
 
     # add negated models -> -(a ^ b) => (-a or -b)
     for model in component_models[component]:
@@ -93,7 +103,7 @@ def check_projection_completeness(component_id, projection_assignment):
         clauses.add(frozenset([l]))
 
     # set of all original variable names
-    variables = component_variables[component]
+    variables = component_local_variables[component]
     variable_mapping = { v : i + 1 for i, v in enumerate(variables)}
 
     problem_string = " ".join(map(str, ["p", "cnf", len(variables), len(clauses)])) + "\n"
@@ -114,6 +124,12 @@ def check_projection_completeness(component_id, projection_assignment):
 # checks correctness of component models.
 # new: does not check completeness, this is checked in projection
 def check_model_correctness(component_id):
+    # local variables and clauses must be subsets of subtree equivalents
+    if not component_local_variables[component_id] <= component_variables[component_id] \
+         or not component_local_clauses[component_id] <= component_clauses[component_id]:
+            print ("local variables / clauses not in subtree sets!");
+            sys.exit(1)
+
     for model in component_models[component]:
         # check if this is actually a model
         if not check_model(component, model):
@@ -121,8 +137,27 @@ def check_model_correctness(component_id):
             print ("applicable clauses:", component_clauses[component])
             sys.exit(1)
 
+    # all models of a component must use the same variables:
+    if len(set([frozenset([abs(l) for l in m]) for m in component_models[component_id]])) != 1:
+        print ("differing model variables in", component, "!")
+        sys.exit(1)
+
 def flatten(l):
     return [val for sublist in l for val in sublist]
+
+
+def projection_vars_of(component_id):
+    comp_projection_lits = set()
+    if component_id in component_projections:
+        comp_projection_lits = component_projections[component_id][0][1]
+        # we assume all projections of this component use the same variables
+        assert len(set([p[1] for p in component_projections[component_id]])) == 1
+    else:
+        comp_projection_lits = component_joins[component_id][0][1]
+        # we assume all projections of this component use the same variables
+        assert len(set([p[1] for p in component_joins[component_id]])) == 1
+
+    return frozenset([abs(l) for l in comp_projection_lits])
 
 def largest_subprojection(component_id, pool=None, covered_clauses=None, covered_vars=None):
     if pool is None:
@@ -139,7 +174,8 @@ def largest_subprojection(component_id, pool=None, covered_clauses=None, covered
     # tuple of (matching clauses, matching variables)
     best_subprojection_value = (-1, -1)
 
-    model_vars = frozenset([abs(l) for l in component_models[component_id][0]])
+    model_vars = component_local_variables[component_id]
+    parent_projection_vars = projection_vars_of(component_id)
 
     for c_id in pool:
         if c_id == component_id:
@@ -150,22 +186,20 @@ def largest_subprojection(component_id, pool=None, covered_clauses=None, covered
         common = comp_clauses & covered_clauses
         comp_value = (len(common), len(covered_vars & comp_vars))
 
-        comp_projection_vars = set()
-        if c_id in component_projections:
-            comp_projection_vars = component_projections[c_id][0][1]
-            # we assume all projections of this component use the same variables
-            assert len(set([p[1] for p in component_projections[c_id]])) == 1
-        else:
-            comp_projection_vars = component_joins[c_id][0][1]
-            # we assume all projections of this component use the same variables
-            assert len(set([p[1] for p in component_joins[c_id]])) == 1
-
+        comp_projection_vars = projection_vars_of(c_id)
         projected_away = comp_vars - comp_projection_vars
 
-        # cannot re-introduce a projected away variables
+        # cannot re-introduce projected away variables
         allowed = model_vars & projected_away == set()
 
-        if comp_clauses <= component_clauses[component_id] and comp_vars < component_variables[component_id] and allowed and comp_value > best_subprojection_value:
+        if component_id == 18 and c_id in [30, 24]:
+            print (allowed, projected_away, model_vars)
+
+        # enforce ordering on components to avoid cyclic proofs
+        # thus, children must have either fewer variables or equal vars and a longer projection
+        in_variable_hierarchy = comp_vars < component_variables[component_id] or (comp_vars == component_variables[component_id] and comp_projection_vars > parent_projection_vars)
+
+        if comp_clauses <= component_clauses[component_id] and in_variable_hierarchy and allowed and comp_value > best_subprojection_value:
 
             best_subprojection = c_id
             best_subprojection_value = comp_value
@@ -213,6 +247,10 @@ def get_projection_or_join(component_id):
 
 def check_join_claim(component_id):
     subcomponents = find_covering_components(component_id)
+    if not subcomponents:
+        return False
+
+    #fixme: check completeness of subcomponent projections for this join
 
     join_table = [(c, set(a)) for c, a in get_projection_or_join(subcomponents[0])]
     for comp_id in subcomponents[1:]:
@@ -245,13 +283,12 @@ def check_join_claim(component_id):
 def assignment_compatible(a1, a2):
     return len(a1 | a2) == len(set([abs(l) for l in a1]) | set([abs(l) for l in a2]))
 
-def check_projection(comp_proj, comp_source, comp_bridge):
+def check_projection(comp_proj, comp_source):
     source_assignments = component_projections[comp_source] if comp_source in component_projections else component_joins[comp_source]
 
     source_vars = component_variables[comp_source]
 
 
-    counted_models = set()
     for c_proj, a_proj in component_projections[comp_proj]:
 
         # check underlying model claim completeness
@@ -259,8 +296,16 @@ def check_projection(comp_proj, comp_source, comp_bridge):
             print ("model claims for component", comp_proj, "incomplete for projection", a_proj, "!")
             return False
 
+        if not comp_proj in component_local_variables \
+            or comp_proj not in component_local_clauses \
+            or comp_proj not in component_models:
+
+            print ("projected component", comp_proj, "does not have models!")
+            return False
+
         c_proj_check = 0
-        for bridge_assignment in component_models[comp_bridge]:
+        counted_models = set()
+        for bridge_assignment in component_models[comp_proj]:
             # the projected assignment must be a restriction of the bridge_assignment
             if not a_proj <= bridge_assignment:
                 continue
@@ -272,15 +317,15 @@ def check_projection(comp_proj, comp_source, comp_bridge):
                     counted_models.add(bridge_assignment)
 
         if c_proj_check != c_proj:
-            print ("check for projection", comp_proj, comp_source, "failed:", *a_proj, ":", c_proj_check, "<->", c_proj)
+            print ("check for projection", bridge_components, comp_source, "failed for", *a_proj, ": is ", c_proj_check, "instead of", c_proj)
             return False
 
-    # there are models left that where not projected
-    for model in set(component_models[comp_bridge]) - counted_models:
+        # there are models left that where not projected
         for _, a_source in source_assignments:
-            if assignment_compatible(model, a_source):
-                print ("incomplete projection", comp_proj, "model", model, "not covered.")
-                return False
+            for model in set(component_models[comp_proj]) - counted_models:
+                if assignment_compatible(model, a_source):
+                    print ("incomplete projection", comp_proj, "model", model, "not covered.")
+                    return False
 
     return True
 
@@ -303,25 +348,8 @@ def check_projection_claim(component_id):
     assert predecessor in component_projections or predecessor in component_joins
     assert comp_vars > pred_vars
 
-    introduce_vars = comp_vars - pred_vars
-
-    bridge_component = component_id # 0
-    #for key, value in component_clauses.items():
-    #    candidate_vars = component_variables[key]
-    #    # the current component adds additional clauses
-    #    if clauses_needed and value == clauses_needed and candidate_vars <= comp_vars:
-    #        bridge_component = key
-    #        break
-    #    # no clauses added
-    #    elif not clauses_needed and candidate_vars == introduce_vars:
-    #        bridge_component = key
-    #        break
-    #else:
-    #    print ("no bridge component found for", component_id, predecessor)
-    #    return False
-
-    print ("checking projection", component_id, "with predecessor", predecessor, "bridge", bridge_component)
-    return check_projection(component_id, predecessor, bridge_component)
+    print ("checking projection", component_id, "with predecessor", predecessor)
+    return check_projection(component_id, predecessor)
 
 
 if __name__ == "__main__":
@@ -338,13 +366,13 @@ if __name__ == "__main__":
 
     print ("model claim correctness verified.", file=sys.stderr)
 
-    for component, l in component_projections.items():
-        checked = check_projection_claim(component)
-        if not checked:
-            print ("projection claim", component, "failed!")
-            sys.exit(1)
+    #for component, l in component_projections.items():
+    #    checked = check_projection_claim(component)
+    #    if not checked:
+    #        print ("projection claim", component, "failed!")
+    #        sys.exit(1)
 
-    print ("projection claims verified.")
+    #print ("projection claims verified.")
 
     for component, l in component_joins.items():
         checked = check_join_claim(component)
