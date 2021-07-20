@@ -79,19 +79,18 @@ def map_lit(variable_mapping, l):
 def map_clause(variable_mapping, clause):
     return [map_lit(variable_mapping, l) for l in clause if abs(l) in variable_mapping]
 
-def check_model_claims(component_id):
+
+def check_projection_completeness(component_id, projection_assignment):
     clauses = set(component_clauses[component])
 
     # add negated models -> -(a ^ b) => (-a or -b)
     for model in component_models[component]:
-        # check if this is actually a model
-        if not check_model(component, model):
-            print ("model claim", component, "failed:", model, "is no model!")
-            print ("applicable clauses:", component_clauses[component])
-            sys.exit(1)
+        if projection_assignment <= model:
+            clauses.add(frozenset([-l for l in model]))
 
-        clauses.add(frozenset([-l for l in model]))
-
+    # add projection assignment
+    for l in projection_assignment:
+        clauses.add(frozenset([l]))
 
     # set of all original variable names
     variables = component_variables[component]
@@ -108,7 +107,19 @@ def check_model_claims(component_id):
         print (problem_string)
         print ("mapping:", variable_mapping)
         print (result.stdout)
-        sys.exit(2)
+        return False
+    return True
+
+
+# checks correctness of component models.
+# new: does not check completeness, this is checked in projection
+def check_model_correctness(component_id):
+    for model in component_models[component]:
+        # check if this is actually a model
+        if not check_model(component, model):
+            print ("model claim", component, "failed:", model, "is no model!")
+            print ("applicable clauses:", component_clauses[component])
+            sys.exit(1)
 
 def flatten(l):
     return [val for sublist in l for val in sublist]
@@ -127,6 +138,9 @@ def largest_subprojection(component_id, pool=None, covered_clauses=None, covered
     best_subprojection = -1
     # tuple of (matching clauses, matching variables)
     best_subprojection_value = (-1, -1)
+
+    model_vars = frozenset([abs(l) for l in component_models[component_id][0]])
+
     for c_id in pool:
         if c_id == component_id:
             continue
@@ -147,13 +161,9 @@ def largest_subprojection(component_id, pool=None, covered_clauses=None, covered
             assert len(set([p[1] for p in component_joins[c_id]])) == 1
 
         projected_away = comp_vars - comp_projection_vars
-        new_clauses = component_clauses[component_id] - comp_clauses;
 
-        # projected away variables must not occur in new clauses
-        allowed = set(flatten([variable_clauses[v] for v in projected_away])) & new_clauses == set()
-
-        if component_id == 18 and c_id == 20:
-            print (shared_vars, set(flatten([variable_clauses[v] for v in shared_vars])), allowed)
+        # cannot re-introduce a projected away variables
+        allowed = model_vars & projected_away == set()
 
         if comp_clauses <= component_clauses[component_id] and comp_vars < component_variables[component_id] and allowed and comp_value > best_subprojection_value:
 
@@ -240,8 +250,15 @@ def check_projection(comp_proj, comp_source, comp_bridge):
 
     source_vars = component_variables[comp_source]
 
+
     counted_models = set()
     for c_proj, a_proj in component_projections[comp_proj]:
+
+        # check underlying model claim completeness
+        if not check_projection_completeness(comp_proj, a_proj):
+            print ("model claims for component", comp_proj, "incomplete for projection", a_proj, "!")
+            return False
+
         c_proj_check = 0
         for bridge_assignment in component_models[comp_bridge]:
             # the projected assignment must be a restriction of the bridge_assignment
@@ -288,20 +305,20 @@ def check_projection_claim(component_id):
 
     introduce_vars = comp_vars - pred_vars
 
-    bridge_component = 0
-    for key, value in component_clauses.items():
-        candidate_vars = component_variables[key]
-        # the current component adds additional clauses
-        if clauses_needed and value == clauses_needed and candidate_vars <= comp_vars:
-            bridge_component = key
-            break
-        # no clauses added
-        elif not clauses_needed and candidate_vars == introduce_vars:
-            bridge_component = key
-            break
-    else:
-        print ("no bridge component found for", component_id, predecessor)
-        return False
+    bridge_component = component_id # 0
+    #for key, value in component_clauses.items():
+    #    candidate_vars = component_variables[key]
+    #    # the current component adds additional clauses
+    #    if clauses_needed and value == clauses_needed and candidate_vars <= comp_vars:
+    #        bridge_component = key
+    #        break
+    #    # no clauses added
+    #    elif not clauses_needed and candidate_vars == introduce_vars:
+    #        bridge_component = key
+    #        break
+    #else:
+    #    print ("no bridge component found for", component_id, predecessor)
+    #    return False
 
     print ("checking projection", component_id, "with predecessor", predecessor, "bridge", bridge_component)
     return check_projection(component_id, predecessor, bridge_component)
@@ -316,16 +333,16 @@ if __name__ == "__main__":
     print (len(component_projections), "component projection claims.", file=sys.stderr)
     print (len(component_joins), "component join claims.", file=sys.stderr)
 
-    #for component in component_models.keys():
-    #    check_model_claims(component)
+    for component in component_models.keys():
+        check_model_correctness(component)
 
-    print ("model claims verified (according to minisat).", file=sys.stderr)
+    print ("model claim correctness verified.", file=sys.stderr)
 
-    #for component, l in component_projections.items():
-    #    checked = check_projection_claim(component)
-    #    if not checked:
-    #        print ("projection claim", component, "failed!")
-    #        sys.exit(1)
+    for component, l in component_projections.items():
+        checked = check_projection_claim(component)
+        if not checked:
+            print ("projection claim", component, "failed!")
+            sys.exit(1)
 
     print ("projection claims verified.")
 
