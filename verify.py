@@ -20,6 +20,8 @@ component_local_clauses = {}
 component_clauses = {}
 # list of join claims by component
 component_joins  = defaultdict(list)
+# list of composition components
+component_compositions  = defaultdict(list)
 
 # lookup for which variables occur in which clauses
 variable_clauses = defaultdict(list)
@@ -64,6 +66,13 @@ def parse_proof(input_file):
 
         elif l_type == "j":
             component_joins[l_id].append((l_count, frozenset(l_data)))
+
+        elif l_type == "a":
+            component_compositions[l_id].append((l_count, frozenset(l_data)))
+
+        else:
+            print ("unknown line type:", l_type)
+            sys.exit(1)
 
     # insert empty projection component
     component_clauses[-1] = frozenset()
@@ -192,14 +201,15 @@ def largest_subprojection(component_id, pool=None, covered_clauses=None, covered
         # cannot re-introduce projected away variables
         allowed = model_vars & projected_away == set()
 
-        if component_id == 18 and c_id in [30, 24]:
-            print (allowed, projected_away, model_vars)
-
         # enforce ordering on components to avoid cyclic proofs
         # thus, children must have either fewer variables or equal vars and a longer projection
         in_variable_hierarchy = comp_vars < component_variables[component_id] or (comp_vars == component_variables[component_id] and comp_projection_vars > parent_projection_vars)
 
-        if comp_clauses <= component_clauses[component_id] and in_variable_hierarchy and allowed and comp_value > best_subprojection_value:
+        if comp_clauses <= component_clauses[component_id] \
+            and in_variable_hierarchy \
+            and allowed \
+            and comp_value > best_subprojection_value \
+            and comp_projection_vars >= parent_projection_vars:
 
             best_subprojection = c_id
             best_subprojection_value = comp_value
@@ -214,6 +224,23 @@ def clause_index_list(clauses):
     assert len(cl) == len(clauses)
     return cl
 
+def combine_projections(projections):
+    # fixme: only supports unit clauses
+    reduced = True
+    new = set()
+    while reduced:
+        new = set()
+        reduced = False
+        for c in projections:
+            assert len(c) == 1
+            if {-list(c)[0]} in projections:
+                reduced = True
+                continue
+            else:
+                new.add(c)
+        projections = new
+    return new
+
 # this is actually the set cover problem, we're using a greedy algorithm here
 def find_covering_components(component_id):
     pool=(set(component_projections.keys()) | set(component_joins.keys()))
@@ -223,15 +250,21 @@ def find_covering_components(component_id):
     comp_clauses = component_clauses[component_id]
     child_vars = set()
     child_clauses = set()
-    while pool and (child_clauses != comp_clauses or child_vars != comp_vars):
+    child_projections = set()
+
+    # projections must cover join projection
+    # FIXME: allow multiple join projections
+    join_projection_vars = projection_vars_of(component_id)
+
+    while pool and (child_clauses != comp_clauses or child_vars != comp_vars or combine_projections(child_projections) != join_projection_vars):
         clauses_left = comp_clauses - child_clauses
         vars_left = comp_vars - child_vars
         largest = largest_subprojection(component_id, pool, clauses_left, vars_left)
         #print ("it", component_id, largest, children, clause_index_list(clauses_left), vars_left)
         # the trivial component is returned
         if largest == -1:
-            assert clauses_left or vars_left
-            print ("cannot verify", component_id, ": clauses", clause_index_list(clauses_left), "and vars", vars_left, "not covered.")
+            assert clauses_left or vars_left or combine_projections(child_projections) != join_projection_vars
+            print ("cannot verify", component_id, ": clauses", clause_index_list(clauses_left), "or vars", vars_left, "not covered or ", child_projections, "do not resolve to", join_projection_vars)
             return None
 
         children.append(largest)
@@ -239,17 +272,21 @@ def find_covering_components(component_id):
         child_vars |= component_variables[largest]
         child_clauses |= component_clauses[largest]
 
+        for _, proj in get_projection_or_join(largest):
+            child_projections.add(proj)
+
     return children
 
 
 def get_projection_or_join(component_id):
-    return component_projections.get(component_id, component_joins.get(component_id))
+    return component_projections.get(component_id, component_joins.get(component_id, component_compositions.get(component_id)))
 
 def check_join_claim(component_id):
     subcomponents = find_covering_components(component_id)
     if not subcomponents:
         return False
 
+    print ("subcomponents for", component_id, ":", subcomponents)
     #fixme: check completeness of subcomponent projections for this join
 
     join_table = [(c, set(a)) for c, a in get_projection_or_join(subcomponents[0])]
@@ -270,7 +307,7 @@ def check_join_claim(component_id):
                 projections_used.add(frozenset(a))
 
         if c_join_check != c_join:
-            print ("check for join", component_id, subcomponents, "failed:", *a_join, ":", c_join_check, "<->", c_join)
+            print ("check for join", component_id, subcomponents, "failed with", *a_join, ": is" , c_join_check, "but should be", c_join)
             return False
 
     # there are unused assignments in the join table
@@ -351,6 +388,36 @@ def check_projection_claim(component_id):
     print ("checking projection", component_id, "with predecessor", predecessor)
     return check_projection(component_id, predecessor)
 
+def check_composition_claim(component_id, projection, count):
+
+    clauses = component_clauses[component_id]
+    variables = component_variables[component_id]
+
+    applicable_projections = []
+    for origin_comp in component_variables.keys():
+        if component_variables[origin_comp] != variables:
+            continue
+        if component_clauses[origin_comp] != clauses:
+            continue
+
+        for count, origin_proj in get_projection_or_join(origin_comp):
+            if origin_proj > projection:
+                # projections must not overlap!
+                # currently, we only accept unit clauses
+                assert len(origin_proj) == 1
+                applicable_projections.append((count, origin_proj))
+
+    # currently, we only use unit literals so this should work
+    assert combine_projections([p[1] for p in applicable_projections]) == projection
+
+    combined_count = 0;
+    for c, origin_proj in applicable_projections:
+        combined_count += c
+
+    if count != combined_count:
+        print ("composition claim for", component_id, projection, "could not be verified: expected", count, "got", combined_count);
+        return False
+    return True
 
 if __name__ == "__main__":
     print ("parsing...", file=sys.stderr)
@@ -360,11 +427,20 @@ if __name__ == "__main__":
     print (len(component_models), "model claims.", file=sys.stderr)
     print (len(component_projections), "component projection claims.", file=sys.stderr)
     print (len(component_joins), "component join claims.", file=sys.stderr)
+    print (len(component_compositions), "component composition claims.", file=sys.stderr)
 
     for component in component_models.keys():
         check_model_correctness(component)
 
     print ("model claim correctness verified.", file=sys.stderr)
+
+    for component, l in component_compositions.items():
+        for (count, projection) in l:
+            if not check_composition_claim(component, projection, count):
+                print ("composition claim", component, "failed!")
+                sys.exit(1)
+
+    print ("composition claims verified.", file=sys.stderr);
 
     #for component, l in component_projections.items():
     #    checked = check_projection_claim(component)
