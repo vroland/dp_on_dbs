@@ -3,6 +3,7 @@
 import sys
 import subprocess
 from collections import defaultdict
+from itertools import product
 
 # contains clauses as lists of literals
 clauses_dict = {}
@@ -100,17 +101,9 @@ def map_clause(variable_mapping, clause):
     return [map_lit(variable_mapping, l) for l in clause if abs(l) in variable_mapping]
 
 
-def check_projection_model_completeness(component_id, projection_assignment):
-    clauses = set(component_local_clauses[component])
-
-    # add negated models -> -(a ^ b) => (-a or -b)
-    for model in component_models[component]:
-        if projection_assignment <= model:
-            clauses.add(frozenset([-l for l in model]))
-
-    # add projection assignment
-    for l in projection_assignment:
-        clauses.add(frozenset([l]))
+def component_unsatisfiable(component, additional_clauses):
+    clauses = set(component_clauses[component])
+    clauses |= additional_clauses
 
     # set of all original variable names
     variables = component_local_variables[component]
@@ -129,6 +122,20 @@ def check_projection_model_completeness(component_id, projection_assignment):
         print (result.stdout)
         return False
     return True
+
+def check_projection_model_completeness(component_id, projection_assignment):
+
+    clauses = set()
+    # add projection assignment
+    for l in projection_assignment:
+        clauses.add(frozenset([l]))
+
+    # add negated models -> -(a ^ b) => (-a or -b)
+    for model in component_models[component]:
+        if projection_assignment <= model:
+            clauses.add(frozenset([-l for l in model]))
+
+    return component_unsatisfiable(component_id, clauses)
 
 
 # checks correctness of component models.
@@ -173,7 +180,10 @@ def combine_projections(projections):
         new = set()
         reduced = False
         for c in projections:
-            assert len(c) == 1
+            # cannot handle this right now
+            if len(c) != 1:
+                return False
+
             if {-list(c)[0]} in projections:
                 reduced = True
                 continue
@@ -220,7 +230,9 @@ def find_covering_components(parent_comp, join_projection, subprojections, cover
                         continue
 
                     compatible = join_compatible(comp, proj, subcomp, p_sub)
+
                     already_covered = any([is_subprojection_of(proj, comp, p[1], co) for co, p in cover])
+
                     if not already_covered and compatible:
                         applicable_projections.add(subproj)
 
@@ -241,14 +253,23 @@ def find_covering_components(parent_comp, join_projection, subprojections, cover
 
     # cannot append additional subcomponents
     if not results:
+        if covered_variables != comp_vars or covered_clauses != comp_clauses:
+            return set()
         covered_projections = [p[1] for _, p in cover]
 
+        #print (parent_comp, join_projection, cover, covered_projections)
+        projections_complete = combine_projections(covered_projections) == {join_projection}
+
+        if not projections_complete:
+            projections_complete = all([subprojections_complete_wrt(p[0], join_projection) for p in cover])
+
+
         # set of components is non-covering
-        if covered_clauses != comp_clauses or covered_variables != comp_vars or combine_projections(covered_projections) != {join_projection}:
+        if covered_clauses != comp_clauses or covered_variables != comp_vars or not projections_complete:
             return set()
 
-        # a valid set of subcomponents
-        return {cover}
+        # return only components
+        return {tuple([p[0] for p in cover])}
 
     return results
 
@@ -281,11 +302,7 @@ def is_subprojection_of(p1, c1, p2, c2):
         return False
 
     if c1v < c2v:
-        # complete components are joinable
-        if p1 == set():
-            return True
-        # otherwise the child must be a specialization
-        return p1 >= p2
+        return True
 
     if c1v != c2v:
         return False
@@ -307,10 +324,33 @@ def join_compatible(c1, p1, c2, p2):
     c2v = component_variables[c2]
     p1v = {abs(l) for l in p1}
     p2v = {abs(l) for l in p2}
-    return (c1v - p1v) & (c2v - p2v) == set();
+    return (c1v - p1v) & c2v == set() and (c2v - p2v) & c1v == set();
+
+def subprojections_complete_wrt(component_id, projection):
+    #this is a leaf projection
+    if component_id == -1:
+        return True
+
+    projection_clauses = set()
+    # add negated projections -> -(a ^ b) => (-a or -b)
+    for (_, p) in all_projections()[component_id]:
+        projection_clauses.add(frozenset([-l for l in p]))
+
+    for l in projection:
+        if l in component_variables[component_id]:
+            projection_clauses.add(frozenset([l]))
+
+    complete = component_unsatisfiable(component_id, projection_clauses)
+
+    print (component_id, projection, complete)
+    if not complete:
+        print ("subprojections incomplete: ", component_id, projection)
+        return False
+    return complete
 
 def applicable_projections_for(component_id, projection):
-    return {(c, p) for c, l in all_projections().items() for p in l if is_subprojection_of(p[1], c, projection, component_id)}
+    return {(c, p) for c, l in all_projections().items() for p in l if is_subprojection_of(p[1], c, projection, component_id) and assignment_compatible(p[1], projection)}
+    #   and subprojection_complete_wrt(c, projection)
 
 def check_join_claim(component_id):
 
@@ -329,14 +369,30 @@ def check_join_claim(component_id):
 
         #fixme: check completeness of subcomponent projections for this join
 
+        print (component_id, "subcomponent_sets:", subcomponent_sets)
+
         for subcomponents in subcomponent_sets:
             join_table = [(1, p_join)]
-            for comp_id, (c_sub, a_sub) in subcomponents:
+            for comp_id in subcomponents:
                 new_table = []
                 for c, a in join_table:
-                    if assignment_compatible(a_sub, a):
-                        new_table.append((c_sub * c, a | a_sub))
+                    comp_projections = all_projections()[comp_id]
+                    projection_assignments = [p[1] for p in comp_projections]
+
+                    applicable_projections = []
+                    for (c_sub, a_sub) in comp_projections:
+                        # remove projections of which more general versions exist
+                        more_general = [p for p in comp_projections if p[1] < a_sub and assignment_compatible(a_sub, a)]
+                        if assignment_compatible(a_sub, a) and not more_general:
+                            applicable_projections.append((c_sub, a_sub))
+                        #else:
+                            #print (comp_id, ":", "remove", c_sub, a_sub, "in favour of", more_general)
+
+                    for (c_sub, a_sub) in applicable_projections:
+                        if assignment_compatible(a_sub, a):
+                            new_table.append((c_sub * c, a | a_sub))
                 join_table = new_table
+                #print (comp_id, join_table)
 
             projections_used = set()
             c_join_check = 0
@@ -394,14 +450,38 @@ def check_projection_claim(component_id, projection, count):
     for c, p in applicable_projections:
         by_component[c].append((c, p))
 
-    # only complete projections
-    by_component = {k : v for k, v in by_component.items() if combine_projections({p[1][1] for p in v}) == {projection}}
-
-    #print ("source projections for", component_id, set(projection), ":", dict(by_component))
+    print ("source projections for", component_id, set(projection), ":", dict(by_component))
     # FIXME: check applicable_projections completeness
 
+    found = False
     # one combination is probably sufficient:
-    for subprojections in by_component.values():
+    for subcomponent, subprojections in by_component.items():
+
+        # all subprojections must be of the same level
+        subprojection_vars = {frozenset({abs(l) for l in p[1][1]}) for p in subprojections}
+        assert len(subprojection_vars) == 1
+
+        subprojection_vars = subprojection_vars.pop()
+
+
+        # this is not a leaf projection
+        #if subprojections[0] != (-1, (1, frozenset())):
+        #    projection_clauses = set()
+
+        #    # add negated projections -> -(a ^ b) => (-a or -b)
+        #    for _, (_, p) in subprojections:
+        #        projection_clauses.add(frozenset([-l for l in p]))
+
+        #    # add parent projection as constraints
+        #    for l in projection:
+        #        projection_clauses.add(frozenset({l}))
+
+        #    complete = component_unsatisfiable(component_id, projection_clauses)
+
+        #    if not complete:
+        #        print ("subprojections incomplete: ", subprojections)
+        #        continue
+
         joint_assignments = []
         for c_sub, (co, a_sub) in subprojections:
             for a in component_models[component_id]:
@@ -413,11 +493,18 @@ def check_projection_claim(component_id, projection, count):
             if assignment >= projection:
                 c_proj_check += cnt
 
-        if c_proj_check != count:
+        # incomplete subcomponent, skip
+        if c_proj_check < count:
+            continue
+
+        if c_proj_check > count:
             print ("check for projection of", component_id, "from", subprojections, "failed for", set(projection), ": is ", c_proj_check, "instead of", count)
             return False
 
-    return True
+        assert c_proj_check == count
+        found = True
+
+    return found
 
 def check_composition_claim(component_id, projection, count):
 
@@ -476,14 +563,14 @@ if __name__ == "__main__":
 
     print ("composition claims verified.", file=sys.stderr);
 
-    for component, l in component_projections.items():
-        for (count, projection) in l:
-            checked = check_projection_claim(component, projection, count)
-            if not checked:
-                print ("projection claim", component, set(projection), "failed!")
-                sys.exit(1)
+    # for component, l in component_projections.items():
+    #     for (count, projection) in l:
+    #         checked = check_projection_claim(component, projection, count)
+    #         if not checked:
+    #             print ("projection claim", component, set(projection), "failed!")
+    #             sys.exit(1)
 
-    print ("projection claims verified.")
+    # print ("projection claims verified.")
 
     for component, l in component_joins.items():
         checked = check_join_claim(component)
