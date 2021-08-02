@@ -23,6 +23,8 @@ component_clauses = {}
 component_joins  = defaultdict(set)
 # list of composition components
 component_compositions  = defaultdict(set)
+# list of child components for each component
+component_children  = defaultdict(set)
 
 # lookup for which variables occur in which clauses
 variable_clauses = defaultdict(set)
@@ -70,6 +72,9 @@ def parse_proof(input_file):
 
         elif l_type == "a":
             component_compositions[l_id].add((l_count, frozenset(l_data)))
+
+        elif l_type == "cc":
+            component_children[l_data[0]].add(l_id)
 
         else:
             print ("unknown line type:", l_type)
@@ -361,53 +366,53 @@ def check_join_claim(component_id):
         # the trivial component does not add anything
         applicable_projections.remove((-1, (1, frozenset())))
 
+        applicable_projections = set()
+        for c in component_children[component_id]:
+            applicable_projections |= {(c, v) for v in all_projections()[c]}
+
         # FIXME: ensure join compatibility among subcomponents
-        subcomponent_sets = find_covering_components(component_id, p_join, applicable_projections)
-        if not subcomponent_sets:
+        subcomponents = component_children[component_id] #find_covering_components(component_id, p_join, applicable_projections)
+        if not subcomponents:
             print ("no subcomponents found for ", component_id, set(p_join))
             return False
 
         #fixme: check completeness of subcomponent projections for this join
 
-        print (component_id, "subcomponent_sets:", subcomponent_sets)
-
-        for subcomponents in subcomponent_sets:
-            join_table = [(1, p_join)]
-            for comp_id in subcomponents:
-                new_table = []
-                for c, a in join_table:
-                    comp_projections = all_projections()[comp_id]
-                    projection_assignments = [p[1] for p in comp_projections]
-
-                    applicable_projections = []
-                    for (c_sub, a_sub) in comp_projections:
-                        # remove projections of which more general versions exist
-                        more_general = [p for p in comp_projections if p[1] < a_sub and assignment_compatible(a_sub, a)]
-                        if assignment_compatible(a_sub, a) and not more_general:
-                            applicable_projections.append((c_sub, a_sub))
-                        #else:
-                            #print (comp_id, ":", "remove", c_sub, a_sub, "in favour of", more_general)
-
-                    for (c_sub, a_sub) in applicable_projections:
-                        if assignment_compatible(a_sub, a):
-                            new_table.append((c_sub * c, a | a_sub))
-                join_table = new_table
-                #print (comp_id, join_table)
-
-            projections_used = set()
-            c_join_check = 0
+        join_table = [(1, p_join)]
+        for comp_id in subcomponents:
+            new_table = []
             for c, a in join_table:
-                c_join_check += c
-                projections_used.add(frozenset(a))
+                comp_projections = all_projections()[comp_id]
+                projection_assignments = [p[1] for p in comp_projections]
 
-            if c_join_check != c_join:
-                print ("check for join", component_id, subcomponents, "failed for", set(p_join), ": is" , c_join_check, "but should be", c_join)
-                return False
+                applicable_projections = []
+                for (c_sub, a_sub) in comp_projections:
+                    # remove projections of which more general versions exist
+                    more_general = [p for p in comp_projections if p[1] < a_sub and assignment_compatible(a_sub, a)]
+                    if assignment_compatible(a_sub, a) and not more_general:
+                        applicable_projections.append((c_sub, a_sub))
+                    #else:
+                        #print (comp_id, ":", "remove", c_sub, a_sub, "in favour of", more_general)
 
-            # there are unused assignments in the join table
-            if set([frozenset(a) for c, a in join_table]) - projections_used:
-                print ("join claim", component_id, "incomplete!")
-                return False
+                for (c_sub, a_sub) in applicable_projections:
+                    if assignment_compatible(a_sub, a):
+                        new_table.append((c_sub * c, a | a_sub))
+            join_table = new_table
+
+        projections_used = set()
+        c_join_check = 0
+        for c, a in join_table:
+            c_join_check += c
+            projections_used.add(frozenset(a))
+
+        if c_join_check != c_join:
+            print ("check for join", component_id, subcomponents, "failed for", set(p_join), ": is" , c_join_check, "but should be", c_join)
+            return False
+
+        # there are unused assignments in the join table
+        if set([frozenset(a) for c, a in join_table]) - projections_used:
+            print ("join claim", component_id, "incomplete!")
+            return False
 
     return True
 
@@ -425,86 +430,43 @@ def check_projection_claim(component_id, projection, count):
     comp_local_vars = component_local_variables[component_id]
     comp_local_clauses = component_local_clauses[component_id]
 
+    child_components = component_children[component_id]
+    assert len(child_components) <= 1
+    child = list(child_components)[0] if child_components else -1
+
     # check underlying model claim completeness
     if not check_projection_model_completeness(component_id, projection):
         print ("model claims for component", component_id, "incomplete for projection", projection, "!")
         return False
 
-    applicable_projections = applicable_projections_for(component_id, projection)
-
     # subcomponent combines to parent
-    completes = lambda c, p: \
-        component_variables[c] | comp_local_vars == comp_vars \
-            and component_clauses[c] | comp_local_clauses == comp_clauses \
-            and assignment_compatible(p[1], projection)
+    assert component_variables[child] | comp_local_vars == comp_vars \
+            and component_clauses[child] | comp_local_clauses == comp_clauses
 
-    applicable_projections = {(c, p) for c, p in applicable_projections if completes(c, p)}
+    subprojections = all_projections()[child]
+    # all subprojections must be of the same level
+    subprojection_vars = {frozenset({abs(l) for l in p[1]}) for p in subprojections}
+    assert len(subprojection_vars) == 1
 
+    subprojection_vars = subprojection_vars.pop()
 
-    if applicable_projections == set():
-        print ("no possible subprojections found for", component_id, set(projection), "!")
-        sys.exit(1)
+    joint_assignments = []
+    for co, a_sub in subprojections:
+        for a in component_models[component_id]:
+            if assignment_compatible(a_sub, a):
+                joint_assignments.append((co, a | a_sub))
 
-    # FIXME: cannot use projections from different components
-    by_component = defaultdict(list)
-    for c, p in applicable_projections:
-        by_component[c].append((c, p))
+    c_proj_check = 0
+    for (cnt, assignment) in joint_assignments:
+        if assignment >= projection:
+            c_proj_check += cnt
 
-    print ("source projections for", component_id, set(projection), ":", dict(by_component))
-    # FIXME: check applicable_projections completeness
+    if c_proj_check != count:
+        print ("check for projection of", component_id, "from", subprojections, "failed for", set(projection), ": is ", c_proj_check, "instead of", count)
+        return False
 
-    found = False
-    # one combination is probably sufficient:
-    for subcomponent, subprojections in by_component.items():
-
-        # all subprojections must be of the same level
-        subprojection_vars = {frozenset({abs(l) for l in p[1][1]}) for p in subprojections}
-        assert len(subprojection_vars) == 1
-
-        subprojection_vars = subprojection_vars.pop()
-
-
-        # this is not a leaf projection
-        #if subprojections[0] != (-1, (1, frozenset())):
-        #    projection_clauses = set()
-
-        #    # add negated projections -> -(a ^ b) => (-a or -b)
-        #    for _, (_, p) in subprojections:
-        #        projection_clauses.add(frozenset([-l for l in p]))
-
-        #    # add parent projection as constraints
-        #    for l in projection:
-        #        projection_clauses.add(frozenset({l}))
-
-        #    complete = component_unsatisfiable(component_id, projection_clauses)
-
-        #    if not complete:
-        #        print ("subprojections incomplete: ", subprojections)
-        #        continue
-
-        joint_assignments = []
-        for c_sub, (co, a_sub) in subprojections:
-            for a in component_models[component_id]:
-                if assignment_compatible(a_sub, a):
-                    joint_assignments.append((co, a | a_sub))
-
-        c_proj_check = 0
-        for (cnt, assignment) in joint_assignments:
-            if assignment >= projection:
-                c_proj_check += cnt
-
-        # incomplete subcomponent, skip
-        if c_proj_check < count:
-            continue
-
-        if c_proj_check > count:
-            print ("check for projection of", component_id, "from", subprojections, "failed for", set(projection), ": is ", c_proj_check, "instead of", count)
-            return False
-
-        assert c_proj_check == count
-        found = True
-
-    return found
+    assert c_proj_check == count
+    return True
 
 def check_composition_claim(component_id, projection, count):
 
@@ -563,14 +525,15 @@ if __name__ == "__main__":
 
     print ("composition claims verified.", file=sys.stderr);
 
-    # for component, l in component_projections.items():
-    #     for (count, projection) in l:
-    #         checked = check_projection_claim(component, projection, count)
-    #         if not checked:
-    #             print ("projection claim", component, set(projection), "failed!")
-    #             sys.exit(1)
+    for component, l in component_projections.items():
+        for (count, projection) in l:
+            checked = check_projection_claim(component, projection, count)
+            if not checked:
+                print ("projection claim", component, set(projection), "failed!")
+                sys.exit(1)
+        print ("projection claim", component, "verified.")
 
-    # print ("projection claims verified.")
+    print ("projection claims verified.")
 
     for component, l in component_joins.items():
         checked = check_join_claim(component)

@@ -65,8 +65,10 @@ class SharpSat(Problem):
         self.print_proof_line("cd", id, 0, sorted(recursive_clause_idx))
         self.print_proof_line("lv", id, 0, sorted(local_vertice_set))
         self.print_proof_line("ld", id, 0, sorted(local_clause_idx))
+        if node.parent:
+            self.print_proof_line("cc", id, 0, [self.subtree_formula_id(node.parent)])
 
-    def print_local_dummy_component(self, id, node):
+    def print_local_dummy_component(self, id, parent_id, node):
         local_vertice_set = set(node.vertices)
 
         local_clauses = covering_clauses(local_vertice_set, self.var_clause_dict)
@@ -76,6 +78,7 @@ class SharpSat(Problem):
         self.print_proof_line("cd", id, 0, sorted(local_clause_idx))
         self.print_proof_line("lv", id, 0, sorted(local_vertice_set))
         self.print_proof_line("ld", id, 0, sorted(local_clause_idx))
+        self.print_proof_line("cc", id, 0, [parent_id])
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -191,7 +194,7 @@ class SharpSat(Problem):
 
                     dummy_id = self.issue_pseudo_id()
                     print ("c", "dummy component for introduce vars of", self.subtree_formula_id(node))
-                    self.print_local_dummy_component(dummy_id, node)
+                    self.print_local_dummy_component(dummy_id, self.subtree_formula_id(node), node)
 
                     for model in self.db.exec_and_fetchall(sql.SQL(q)):
                         l = list(model)
