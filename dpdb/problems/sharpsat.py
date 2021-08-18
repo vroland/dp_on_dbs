@@ -145,7 +145,7 @@ class SharpSat(Problem):
         partial_assignment = node.stored_vertices
         for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
             lm = list(model)
-            self.print_proof_line("p", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
+            self.print_proof_line("j", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
 
     def print_model_claims(self):
         for node in self.td.nodes:
@@ -184,24 +184,6 @@ class SharpSat(Problem):
 
                 self.print_model_claim_of(node)
 
-                # node has additional introduce vars or clauses
-                if introduce_vars or missing_clauses:
-
-                    # pseudo node must not be projected,
-                    # otherwise we could wrongly include
-                    # solutions of other children
-                    q = self.model_claim_query_of(node)
-
-                    dummy_id = self.issue_pseudo_id()
-                    print ("c", "dummy component for introduce vars of", self.subtree_formula_id(node))
-                    self.print_local_dummy_component(dummy_id, self.subtree_formula_id(node), node)
-
-                    for model in self.db.exec_and_fetchall(sql.SQL(q)):
-                        l = list(model)
-                        models = [var if v else -var for v, var in zip(l, node.vertices) if v is not None]
-                        self.print_proof_line("m", dummy_id, 0, models)
-                        self.print_proof_line("p", dummy_id, 1, models)
-
                 print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
                 partial_assignment = node.stored_vertices
@@ -216,6 +198,7 @@ class SharpSat(Problem):
         sum_count = self.db.replace_dynamic_tabs(f"(select coalesce(sum(model_count),0) from {root_tab})")
         self.db.ignore_next_praefix()
         model_count = self.db.update("problem_sharpsat",["model_count"],[sum_count],[f"ID = {self.id}"],"model_count")[0]
+        self.print_proof_line("j", self.td.root.id, model_count, [])
         logger.info("Problem has %d models", model_count)
 
 def var2cnt(node,var):
