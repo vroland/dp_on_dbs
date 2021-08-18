@@ -317,19 +317,12 @@ def check_join_claim(component_id):
 
             join_table = new_table
 
-        projections_used = set()
         c_join_check = 0
         for c, a in join_table:
             c_join_check += c
-            projections_used.add(frozenset(a))
 
         if c_join_check != c_join:
             print ("check for join", component_id, subcomponents, "failed for", set(p_join), ": is" , c_join_check, "but should be", c_join)
-            return False
-
-        # there are unused assignments in the join table
-        if set([frozenset(a) for c, a in join_table]) - projections_used:
-            print ("join claim", component_id, "incomplete!")
             return False
 
     return True
