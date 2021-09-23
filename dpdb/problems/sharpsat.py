@@ -8,6 +8,7 @@ from dpdb.problem import *
 from dpdb.treedecomp import Node
 from .sat_util import *
 from psycopg2 import sql
+from itertools import product
 
 logger = logging.getLogger(__name__)
 
@@ -143,9 +144,12 @@ class SharpSat(Problem):
 
     def print_projection_claim_of(self, node, formula_id):
         partial_assignment = node.stored_vertices
+        models = {frozenset(s) for s in product(*[[-v, v] for v in node.stored_vertices])}
         for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
             lm = list(model)
-            self.print_proof_line("j", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
+            int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
+            self.print_proof_line("j", formula_id, lm[0], int_mod)
+            models.remove(frozenset(int_mod))
 
     def print_model_claims(self):
         for node in self.td.nodes:
@@ -184,13 +188,16 @@ class SharpSat(Problem):
 
                 self.print_model_claim_of(node)
 
+                models = {frozenset(s) for s in product(*[[-v, v] for v in node.stored_vertices])}
                 print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
                 partial_assignment = node.stored_vertices
                 for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
                     formula_id = self.subtree_formula_id(node)
                     lm = list(model)
-                    self.print_proof_line("j", formula_id, lm[0], [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)])
+                    int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
+                    self.print_proof_line("j", formula_id, lm[0], int_mod)
+                    models.remove(frozenset(int_mod))
 
     def after_solve(self):
         self.print_model_claims()
@@ -198,6 +205,7 @@ class SharpSat(Problem):
         sum_count = self.db.replace_dynamic_tabs(f"(select coalesce(sum(model_count),0) from {root_tab})")
         self.db.ignore_next_praefix()
         model_count = self.db.update("problem_sharpsat",["model_count"],[sum_count],[f"ID = {self.id}"],"model_count")[0]
+        print ("c root component: ", self.td.root.id)
         self.print_proof_line("j", self.td.root.id, model_count, [])
         logger.info("Problem has %d models", model_count)
 

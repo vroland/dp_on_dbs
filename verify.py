@@ -136,6 +136,19 @@ def check_projection_model_completeness(component_id, projection_assignment):
 
     return component_unsatisfiable(component_id, clauses)
 
+def check_projection_cover_completeness(component_id, projection_assignment, cover):
+
+    clauses = set()
+    # add projection assignment
+    for l in projection_assignment:
+        clauses.add(frozenset([l]))
+
+    # add negated models -> -(a ^ b) => (-a or -b)
+    for p in cover:
+        clauses.add(frozenset([-l for l in p]))
+
+    return component_unsatisfiable(component_id, clauses)
+
 
 # checks correctness of component models.
 # new: does not check completeness, this is checked in projection
@@ -171,28 +184,18 @@ def clause_index_list(clauses):
     return cl
 
 def combine_projections(projections):
-    # fixme: only supports unit clauses
+    # fixme: only supports exhaustive enumerations
     reduced = True
+    if projections == [set()]:
+        return {frozenset()}
+
     projections = [p for p in projections if p != set()]
-    new = set()
-    while reduced:
-        new = set()
-        reduced = False
-        for c in projections:
-            # cannot handle this right now
-            if len(c) != 1:
-                return False
-
-            if {-list(c)[0]} in projections:
-                reduced = True
-                continue
-            else:
-                new.add(c)
-        projections = new
-    if not new:
-        return set({frozenset({})})
-    return new
-
+    common = set.intersection(*[set(p) for p in projections])
+    variables = [abs(v) for v in projections[0] if not v in common]
+    if len(set(projections)) == 2 ** len(variables):
+        return {frozenset(common)}
+    else:
+        return set(projections)
 
 def get_projection_or_join(component_id):
     return component_joins.get(component_id, component_compositions.get(component_id))
@@ -307,8 +310,16 @@ def check_join_claim(component_id):
 
                     # remove projections of which more general versions exist
                     more_general = [p for p in comp_projections if p[1] < a_sub and assignment_compatible(a_sub, a)]
-                    if assignment_compatible(a_sub, a) and not more_general:
+                    if assignment_compatible(a_sub, p_join) and not more_general:
                         applicable_projections.append((c_sub, a_sub))
+
+
+                # projections must completely cover projection
+                p_join_part = {l for l in p_join if abs(l) in component_variables[comp_id]}
+                p_cover_complete = check_projection_cover_completeness(comp_id, p_join_part, [p[1] for p in applicable_projections])
+                if not p_cover_complete:
+                    print ("projections", *[set(p[1]) for p in applicable_projections], "are not complete for", p_join_part)
+                    return False
 
                 for (c_sub, a_sub) in applicable_projections:
                     if assignment_compatible(a_sub, a):
@@ -337,9 +348,11 @@ def check_composition_claim(component_id, projection, count):
 
     applicable_projections = []
     for origin_comp in component_children[component_id]:
-        if component_variables[origin_comp] != variables:
-            return False
         if component_clauses[origin_comp] != clauses:
+            print ("clauses not equal:", set(component_clauses[origin_comp]), set(clauses))
+            return False
+        if component_variables[origin_comp] != variables:
+            print ("variables not equal:", set(component_variables[origin_comp]), set(variables))
             return False
 
         for c, origin_proj in get_projection_or_join(origin_comp):
@@ -402,6 +415,7 @@ if __name__ == "__main__":
             if not check_composition_claim(component, projection, count):
                 print ("composition claim", component, set(projection), "failed!")
                 sys.exit(1)
+            print ("composition claim", component, set(projection), "verified.")
 
     print ("composition claims verified.", file=sys.stderr);
 
