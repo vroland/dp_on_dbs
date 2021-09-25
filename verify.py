@@ -291,15 +291,15 @@ def check_join_claim(component_id):
             print ("model claims for component", component_id, "incomplete for projection", p_join, "!")
             return False
 
-        join_table = [(1, m) for m in component_models[component_id] if assignment_compatible(m, p_join)]
+        join_table = [(1, m) for m in component_models[component_id] if p_join <= m]
         used_projections = []
         for comp_id in subcomponents:
+            comp_projections = all_projections()[comp_id]
+            projection_assignments = [p[1] for p in comp_projections]
+            p_join_part = restrict(p_join, component_variables[comp_id])
+
             new_table = []
             for c, a in join_table:
-                comp_projections = all_projections()[comp_id]
-                projection_assignments = [p[1] for p in comp_projections]
-
-                applicable_projections = []
                 for (c_sub, a_sub) in comp_projections:
                     if not is_subprojection_of(a_sub, comp_id, p_join, component_id):
                         continue
@@ -308,25 +308,19 @@ def check_join_claim(component_id):
                         print ("info: for", component_id, set(p_join),":", comp_id, set(a_sub), "has join incompatible projection!")
                         continue
 
-                    # remove projections of which more general versions exist
-                    more_general = [p for p in comp_projections if p[1] < a_sub and assignment_compatible(a_sub, a)]
-                    if assignment_compatible(a_sub, p_join) and not more_general:
-                        applicable_projections.append((c_sub, a_sub))
-
-
-                # projections must completely cover projection
-                p_join_part = {l for l in p_join if abs(l) in component_variables[comp_id]}
-                p_cover_complete = check_projection_cover_completeness(comp_id, p_join_part, [p[1] for p in applicable_projections])
-                if not p_cover_complete:
-                    print ("projections", *[set(p[1]) for p in applicable_projections], "are not complete for", p_join_part)
-                    return False
-
-                for (c_sub, a_sub) in applicable_projections:
-                    if assignment_compatible(a_sub, a):
-                        new_table.append((c_sub * c, a | a_sub))
+                    if a_sub <= a:
+                        new_table.append((c_sub * c, a))
                         used_projections.append((comp_id, a_sub))
+                        break
 
             join_table = new_table
+
+            # completeness of subclaim cover
+            cover = [p[1] for p in comp_projections if p_join_part <= p[1]]
+            p_cover_complete = check_projection_cover_completeness(comp_id, p_join_part, cover)
+            if not p_cover_complete:
+                print ("projections", cover, "are not complete for", p_join_part)
+                return False
 
         c_join_check = 0
         for c, a in join_table:
@@ -338,8 +332,11 @@ def check_join_claim(component_id):
 
     return True
 
-def assignment_compatible(a1, a2):
-    return not any([-l in a2 for l in a1])
+def restrict(a1, v):
+    return {l for l in a1 if abs(l) in v}
+
+def varsof(a1):
+    return {abs(l) for l in a1}
 
 def check_composition_claim(component_id, projection, count):
 
