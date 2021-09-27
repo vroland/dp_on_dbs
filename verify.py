@@ -156,7 +156,7 @@ def check_model_correctness(component_id):
     # local variables and clauses must be subsets of subtree equivalents
     if not component_local_variables[component_id] <= component_variables[component_id] \
          or not component_local_clauses[component_id] <= component_clauses[component_id]:
-            print ("local variables / clauses not in subtree sets!");
+            print ("local variables / clauses not in subtree sets for component", component_id);
             sys.exit(1)
 
     for model in component_models[component]:
@@ -240,12 +240,16 @@ def is_subprojection_of(p1, c1, p2, c2):
     return False
 
 # can these components, projections be safely joined?
-def join_compatible(c1, p1, c2, p2):
+def join_compatible(c1, p1, c2, p2, lc):
     c1v = component_variables[c1]
+    c1c = component_clauses[c1]
     c2v = component_variables[c2]
+    c2c = component_clauses[c2]
+
     p1v = {abs(l) for l in p1}
     p2v = {abs(l) for l in p2}
-    return (c1v - p1v) & c2v == set() and (c2v - p2v) & c1v == set();
+    return (c1v - p1v) & c2v == set() and (c2v - p2v) & c1v == set() and \
+        c1c & c2c == set()
 
 def subprojections_complete_wrt(component_id, projection):
     #this is a leaf projection
@@ -271,21 +275,31 @@ def subprojections_complete_wrt(component_id, projection):
 
 def check_join_claim(component_id):
 
+    subcomponents = component_children[component_id]
+
+    # subcomponents combine to parent
+    if not {v for c in subcomponents for v in component_variables[c]} | component_local_variables[component_id] == component_variables[component_id]:
+        print ("incomplete children (variables) for", component_id);
+        return False
+
+    combined_clauses = {d for c in subcomponents for d in component_clauses[c]} | component_local_clauses[component_id]
+    if not combined_clauses == component_clauses[component_id]:
+        print ("incomplete children (clauses) for", component_id,
+                clause_index_list(component_clauses[component_id] - combined_clauses), "subcomponents:", subcomponents);
+        return False
+
+    for comp_id in subcomponents:
+        incomplete_cnt = 0
+        for c in component_clauses[comp_id]:
+            if varsof(c) & component_variables[comp_id] != set() and varsof(c) & component_variables[component_id] != set():
+                for model in component_models[component_id]:
+                    #print (component_id, comp_id, c, restrict(model, new - component_variables[comp_id]), new - component_variables[comp_id], clause_index_list([c]))
+                    assert c & restrict(model, component_variables[component_id] - component_variables[comp_id]) == set()
+                incomplete_cnt += 1
+
+        print (component_id, "->", comp_id, incomplete_cnt, "incomplete clauses checked.")
+
     for c_join, p_join in component_joins[component_id]:
-
-        subcomponents = component_children[component_id]
-
-        # FIXME: ensure join compatibility among subcomponents
-
-        # subcomponents combine to parent
-        if not {v for c in subcomponents for v in component_variables[c]} | component_local_variables[component_id] == component_variables[component_id]:
-            print ("incomplete children for", component_id);
-            return False
-
-        if not {d for c in subcomponents for d in component_clauses[c]} | component_local_clauses[component_id] == component_clauses[component_id]:
-            print ("incomplete children for", component_id);
-            return False
-
         # check underlying model claim completeness
         if not check_projection_model_completeness(component_id, p_join):
             print ("model claims for component", component_id, "incomplete for projection", p_join, "!")
@@ -304,7 +318,7 @@ def check_join_claim(component_id):
                     if not is_subprojection_of(a_sub, comp_id, p_join, component_id):
                         continue
 
-                    if any([not join_compatible(comp_id, a_sub, p[0], p[1]) for p in used_projections if p[0] != comp_id]):
+                    if any([not join_compatible(comp_id, a_sub, p[0], p[1], component_local_clauses[component_id]) for p in used_projections if p[0] != comp_id]):
                         print ("info: for", component_id, set(p_join),":", comp_id, set(a_sub), "has join incompatible projection!")
                         continue
 
@@ -346,7 +360,7 @@ def check_composition_claim(component_id, projection, count):
     applicable_projections = []
     for origin_comp in component_children[component_id]:
         if component_clauses[origin_comp] != clauses:
-            print ("clauses not equal:", set(component_clauses[origin_comp]), set(clauses))
+            print ("clauses not equal:", clause_index_list(component_clauses[origin_comp]), clause_index_list(clauses))
             return False
         if component_variables[origin_comp] != variables:
             print ("variables not equal:", set(component_variables[origin_comp]), set(variables))
