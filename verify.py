@@ -291,11 +291,9 @@ def check_join_claim(component_id):
     for comp_id in subcomponents:
         incomplete_cnt = 0
         for c in component_clauses[comp_id]:
-            if varsof(c) & component_variables[comp_id] != set() and varsof(c) & component_variables[component_id] != set():
-                for model in component_models[component_id]:
-                    #print (component_id, comp_id, c, restrict(model, new - component_variables[comp_id]), new - component_variables[comp_id], clause_index_list([c]))
-                    assert c & restrict(model, component_variables[component_id] - component_variables[comp_id]) == set()
-                incomplete_cnt += 1
+            for model in component_models[component_id]:
+                assert c & restrict(model, component_variables[component_id] - component_variables[comp_id]) == set()
+            incomplete_cnt += 1
 
         print (component_id, "->", comp_id, incomplete_cnt, "incomplete clauses checked.")
 
