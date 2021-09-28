@@ -222,6 +222,23 @@ def is_subprojection_of(p1, c1, p2, c2):
     if (c1v - p1v) & (p2v | c2lv) != set():
         return False
 
+    # check that we keep track of the projection when introducing
+    # a clause after the relevant variables
+    for cl in component_clauses[c2] - component_clauses[c1]:
+        implied = set()
+        relevant_models = [set(m) for m in component_models[c2] if p2 <= m]
+        if relevant_models:
+            implied = set.intersection(*relevant_models)
+
+        # FIXME: Is "clause implied by projection" enough?
+        if varsof(cl) & (c1v - c2lv) != set() and cl & implied == set():
+            print (cl, "(", clause_index_list([cl]), ")", c1v, c2v, p2, c2lv, (c2v - c1v), "restricted clause:", restrict(cl, (c2v - c1v)), "implied:", implied)
+            return False
+
+        #print (cl, c1v, c2v, p2, restrict(cl, c2v - c1v))
+        #if p2 != restrict(cl, c2v - c1v):
+        #    return False
+
     if c1v < c2v:
         return True
 
@@ -248,8 +265,14 @@ def join_compatible(c1, p1, c2, p2, lc):
 
     p1v = {abs(l) for l in p1}
     p2v = {abs(l) for l in p2}
-    return (c1v - p1v) & c2v == set() and (c2v - p2v) & c1v == set() and \
-        c1c & c2c == set()
+    for cl in c1c:
+        if varsof(cl) & (c2v - varsof(p2)) != set():
+            return False
+    for cl in c2c:
+        if varsof(cl) & (c1v - varsof(p1)) != set():
+            return False
+
+    return (c1v - p1v) & c2v == set() and (c2v - p2v) & c1v == set()
 
 def subprojections_complete_wrt(component_id, projection):
     #this is a leaf projection
@@ -293,6 +316,7 @@ def check_join_claim(component_id):
         for c in component_clauses[comp_id]:
             for model in component_models[component_id]:
                 assert c & restrict(model, component_variables[component_id] - component_variables[comp_id]) == set()
+
             incomplete_cnt += 1
 
         print (component_id, "->", comp_id, incomplete_cnt, "incomplete clauses checked.")
