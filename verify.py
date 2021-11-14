@@ -100,12 +100,8 @@ def map_clause(variable_mapping, clause):
     return [map_lit(variable_mapping, l) for l in clause if abs(l) in variable_mapping]
 
 
-def component_unsatisfiable(component, additional_clauses):
-    clauses = set(component_clauses[component])
-    clauses |= additional_clauses
 
-    # set of all original variable names
-    variables = component_local_variables[component]
+def clauses_unsatisfiable(clauses, variables):
     variable_mapping = { v : i + 1 for i, v in enumerate(variables)}
 
     problem_string = " ".join(map(str, ["p", "cnf", len(variables), len(clauses)])) + "\n"
@@ -121,6 +117,15 @@ def component_unsatisfiable(component, additional_clauses):
         print (result.stdout)
         return False
     return True
+
+
+def component_unsatisfiable(component, additional_clauses):
+    clauses = set(component_clauses[component])
+    clauses |= additional_clauses
+
+    # set of all original variable names
+    variables = component_local_variables[component]
+    return clauses_unsatisfiable(clauses, variables)
 
 def check_projection_model_completeness(component_id, projection_assignment):
 
@@ -217,27 +222,12 @@ def is_subprojection_of(p1, c1, p2, c2):
     p2v = {abs(l) for l in p2}
     c1lv = component_local_variables[c1]
     c2lv = component_local_variables[c2]
+    c1c = component_clauses[c1]
+    c2c = component_clauses[c2]
 
     # cannot re-introduce projected-away vars in parent or child
     if (c1v - p1v) & (p2v | c2lv) != set():
         return False
-
-    # check that we keep track of the projection when introducing
-    # a clause after the relevant variables
-    for cl in component_clauses[c2] - component_clauses[c1]:
-        implied = set()
-        relevant_models = [set(m) for m in component_models[c2] if p2 <= m]
-        if relevant_models:
-            implied = set.intersection(*relevant_models)
-
-        # FIXME: Is "clause implied by projection" enough?
-        if varsof(cl) & (c1v - c2lv) != set() and cl & implied == set():
-            print (cl, "(", clause_index_list([cl]), ")", c1v, c2v, p2, c2lv, (c2v - c1v), "restricted clause:", restrict(cl, (c2v - c1v)), "implied:", implied)
-            return False
-
-        #print (cl, c1v, c2v, p2, restrict(cl, c2v - c1v))
-        #if p2 != restrict(cl, c2v - c1v):
-        #    return False
 
     if c1v < c2v:
         return True
@@ -265,6 +255,7 @@ def join_compatible(c1, p1, c2, p2, lc):
 
     p1v = {abs(l) for l in p1}
     p2v = {abs(l) for l in p2}
+
     for cl in c1c:
         if varsof(cl) & (c2v - varsof(p2)) != set():
             return False
@@ -295,6 +286,24 @@ def subprojections_complete_wrt(component_id, projection):
         print ("subprojections incomplete: ", component_id, projection)
         return False
     return complete
+
+
+# get the implication of an assumption based on BCP
+def bcp_impl(clauses, variables, assumption):
+    clauses_cleared = []
+    for cl in clauses:
+        clauses_cleared.append({l for l in cl if abs(l) in variables})
+    implication = set(assumption)
+    changed=True
+    while changed:
+        changed=False
+        for cl in clauses_cleared:
+            reduced = cl - {-l for l in implication}
+            print (reduced)
+            if len(reduced) == 1 and reduced & implication == set():
+                implication.add(list(reduced)[0])
+                changed=True
+    return implication
 
 def check_join_claim(component_id):
 
@@ -334,9 +343,36 @@ def check_join_claim(component_id):
             projection_assignments = [p[1] for p in comp_projections]
             p_join_part = restrict(p_join, component_variables[comp_id])
 
+
+            # check that we keep track of the projection when introducing
+            # a clause after the relevant variables
+            newclauses = component_clauses[component_id] - component_clauses[comp_id]
+            awayvars = component_variables[comp_id] - component_local_variables[component_id]
+            safeclauses = {cl for cl in newclauses if varsof(cl) & awayvars == set()}
+            for cl in newclauses - safeclauses:
+                clauses = {frozenset([l]) for l in p_join} \
+                        | safeclauses  \
+                        | {frozenset([-l]) for l in cl}
+                implied = clauses_unsatisfiable(clauses, component_variables[comp_id])
+                # some variables still unassigned
+                #projection_implied = bcp_impl(component_clauses[component_id], component_variables[component_id], p_join)
+
+
+                # FIXME: ignore for now
+                #continue
+
+                # FIXME: Is "clause implied by projection" enough?
+                if not implied:
+                    print (component_id, cl, "(", clause_index_list([cl]), ")", "subcomp vars:", sorted(list(component_variables[comp_id])), "comp vars:", sorted(list(component_variables[component_id])))
+                    return False
+
             new_table = []
             for c, a in join_table:
                 for (c_sub, a_sub) in comp_projections:
+                    #early exit
+                    if not a_sub <= a:
+                        continue
+
                     if not is_subprojection_of(a_sub, comp_id, p_join, component_id):
                         continue
 
