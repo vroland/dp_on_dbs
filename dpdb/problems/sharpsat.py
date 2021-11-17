@@ -42,10 +42,10 @@ class SharpSat(Problem):
         if do_projection:
             return ["sum(model_count) AS model_count"]
         else:
-            return []
+            return ["model_count AS model_count"]
 
-    def print_proof_line(self, l_type, l_id, l_count, l_data):
-        l = [l_type, l_id, l_count, *l_data, 0]
+    def print_proof_line(self, l_type, *data):
+        l = [l_type, *data, 0]
         print(" ".join(map(str, l)))
 
     def print_component_def(self, id, node):
@@ -62,24 +62,10 @@ class SharpSat(Problem):
         local_clause_idx = [self.clause_index_dict[c] for c in local_clauses]
 
         print("\nc", "bag", "formula for", node.id)
-        self.print_proof_line("cv", id, 0, sorted(recursive_vertice_set))
-        self.print_proof_line("cd", id, 0, sorted(recursive_clause_idx))
-        self.print_proof_line("lv", id, 0, sorted(local_vertice_set))
-        self.print_proof_line("ld", id, 0, sorted(local_clause_idx))
+        self.print_proof_line("d", id, *sorted(recursive_vertice_set), 0, *sorted(recursive_clause_idx))
+        self.print_proof_line("ml", id, id, *sorted(local_vertice_set), 0, *sorted(local_clause_idx), 0)
         if node.parent:
-            self.print_proof_line("cc", id, 0, [self.subtree_formula_id(node.parent)])
-
-    def print_local_dummy_component(self, id, parent_id, node):
-        local_vertice_set = set(node.vertices)
-
-        local_clauses = covering_clauses(local_vertice_set, self.var_clause_dict)
-        local_clause_idx = [self.clause_index_dict[c] for c in local_clauses]
-
-        self.print_proof_line("cv", id, 0, sorted(local_vertice_set))
-        self.print_proof_line("cd", id, 0, sorted(local_clause_idx))
-        self.print_proof_line("lv", id, 0, sorted(local_vertice_set))
-        self.print_proof_line("ld", id, 0, sorted(local_clause_idx))
-        self.print_proof_line("cc", id, 0, [parent_id])
+            self.print_proof_line("jl", id, self.subtree_formula_id(node.parent))
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -87,10 +73,12 @@ class SharpSat(Problem):
 
     def print_define_clauses(self):
 
+        self.print_proof_line("p", self.num_vars, len(self.clauses))
+
         # define clauses
         for id, c in enumerate(self.clauses):
             id += 1
-            self.print_proof_line("f", id, 0, c)
+            self.print_proof_line("f", id, *c)
             self.clause_index_dict[frozenset(c)] = id
 
 
@@ -140,16 +128,47 @@ class SharpSat(Problem):
         q = self.model_claim_query_of(node)
 
         for model in self.db.exec_and_fetchall(sql.SQL(q)):
-            self.print_proof_line("m", claim_id, 0, [v if model[node.vertices.index(v)] else -v for v in node.vertices])
+            # last is model count column
+            model = list(model)[:-1]
+            self.print_proof_line("m", claim_id, *[v if model[node.vertices.index(v)] else -v for v in node.vertices])
+
+    def print_leaf_claim_of(self, node):
+        claim_id = self.subtree_formula_id(node)
+        q = self.model_claim_query_of(node)
+
+        for model in self.db.exec_and_fetchall(sql.SQL(q)):
+            # last is model count column
+            model = list(model)[:-1]
+            self.print_proof_line("l", claim_id, 1, *[v if model[node.vertices.index(v)] else -v for v in node.vertices])
+
+    def print_extension_claim_of(self, node):
+        list_id = self.subtree_formula_id(node)
+        child_id = self.subtree_formula_id(node.children[0])
+        q = "{} {}".format(self.assignment_select(node, do_projection=False), self.filter(node))
+        q = self.db.replace_dynamic_tabs(q)
+
+        models = set()
+        # fixme: inefficient
+        for model in self.db.exec_and_fetchall(sql.SQL(q)):
+            lm = list(model)
+            int_mod = [var if v else -var for v, var in zip(lm[:-1], node.vertices)]
+            self.print_proof_line("e", list_id, child_id, lm[-1], *int_mod)
+            models.add(frozenset(int_mod))
+
+        q = self.model_claim_query_of(node)
+        for model in self.db.exec_and_fetchall(sql.SQL(q)):
+            # last is model count column
+            lm = list(model)[:-1]
+            int_mod = [var if v else -var for v, var in zip(lm, node.vertices)]
+            if not frozenset(int_mod) in models:
+                self.print_proof_line("e", list_id, child_id, 0, *int_mod)
 
     def print_projection_claim_of(self, node, formula_id):
         partial_assignment = node.stored_vertices
-        models = {frozenset(s) for s in product(*[[-v, v] for v in node.stored_vertices])}
         for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
             lm = list(model)
             int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
-            self.print_proof_line("j", formula_id, lm[0], int_mod)
-            models.remove(frozenset(int_mod))
+            self.print_proof_line("a", formula_id, lm[0], *int_mod)
 
     def print_model_claims(self):
         for node in self.td.nodes:
@@ -162,12 +181,13 @@ class SharpSat(Problem):
 
             # IF / leaf
             if num_children <= 1:
+                self.print_model_claim_of(node)
                 if num_children == 1:
                     print ("c", "I/F node", node.id, "is parent of", node.children[0].id)
+                    self.print_extension_claim_of(node)
                 elif num_children == 0:
                     print ("c", "Leaf Node")
-
-                self.print_model_claim_of(node)
+                    self.print_leaf_claim_of(node)
 
                 # we need a projection claim as well
                 if set(node.vertices) != set(node.stored_vertices):
@@ -188,7 +208,6 @@ class SharpSat(Problem):
 
                 self.print_model_claim_of(node)
 
-                models = {frozenset(s) for s in product(*[[-v, v] for v in node.stored_vertices])}
                 print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
                 partial_assignment = node.stored_vertices
@@ -196,8 +215,7 @@ class SharpSat(Problem):
                     formula_id = self.subtree_formula_id(node)
                     lm = list(model)
                     int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
-                    self.print_proof_line("j", formula_id, lm[0], int_mod)
-                    models.remove(frozenset(int_mod))
+                    self.print_proof_line("j", formula_id, lm[0], *int_mod)
 
     def after_solve(self):
         self.print_model_claims()
@@ -206,7 +224,7 @@ class SharpSat(Problem):
         self.db.ignore_next_praefix()
         model_count = self.db.update("problem_sharpsat",["model_count"],[sum_count],[f"ID = {self.id}"],"model_count")[0]
         print ("c root component: ", self.td.root.id)
-        self.print_proof_line("j", self.td.root.id, model_count, [])
+        self.print_proof_line("j", self.td.root.id, model_count, *[])
         logger.info("Problem has %d models", model_count)
 
 def var2cnt(node,var):
