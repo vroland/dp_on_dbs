@@ -35,26 +35,26 @@ class TreeDecomp(object):
         add_nodes(root)
 
         # transform into a nicer TD, where join nodes don't introduce variables
-        for node in self.postorder():
-            if len(node.children) > 1:
-                introduced = set(node.vertices) - set.union(*[set(c.vertices) for c in node.children])
-                # join + introduce nodes
-                if introduced:
-                    self.num_bags += 1
-                    introducenode = Node(self.num_bags + 1, list(node.vertices))
+        #for node in self.postorder():
+        #    if len(node.children) > 1:
+        #        introduced = set(node.vertices) - set.union(*[set(c.vertices) for c in node.children])
+        #        # join + introduce nodes
+        #        if introduced:
+        #            self.num_bags += 1
+        #            introducenode = Node(self.num_bags + 1, list(node.vertices))
 
-                    if node == self.root:
-                        self.root = introducenode
-                    else:
-                        par = node.parent
-                        par.remove_child(node)
-                        par.add_child(introducenode)
+        #            if node == self.root:
+        #                self.root = introducenode
+        #            else:
+        #                par = node.parent
+        #                par.remove_child(node)
+        #                par.add_child(introducenode)
 
-                    for v in  introduced:
-                        node.vertices.remove(v)
-                        del node._vertex_child_map[v]
+        #            for v in  introduced:
+        #                node.vertices.remove(v)
+        #                del node._vertex_child_map[v]
 
-                    introducenode.add_child(node)
+        #            introducenode.add_child(node)
 
 
     @property

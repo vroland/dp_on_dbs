@@ -17,7 +17,7 @@ class SharpSat(Problem):
     def __init__(self, name, pool, store_formula=False, **kwargs):
         super().__init__(name, pool, **kwargs)
         self.store_formula = store_formula
-        self.pseudo_nodes = 0
+        self.pseudo_nodes = 1
 
     def td_node_column_def(self,var):
         return td_node_column_def(var)
@@ -123,23 +123,40 @@ class SharpSat(Problem):
         q = "{} {}".format(self.assignment_select(pseudo_leaf, do_projection=False), self.filter(node))
         return self.db.replace_dynamic_tabs(q)
 
-    def print_model_claim_of(self, node):
-        claim_id = self.subtree_formula_id(node)
+    def model_list_of(self, node):
         q = self.model_claim_query_of(node)
-
+        models = []
         for model in self.db.exec_and_fetchall(sql.SQL(q)):
             # last is model count column
             model = list(model)[:-1]
-            self.print_proof_line("m", claim_id, *[v if model[node.vertices.index(v)] else -v for v in node.vertices])
+            models.append([v if model[node.vertices.index(v)] else -v for v in node.vertices])
+        return models
+
+    def print_model_claim_of(self, node):
+        claim_id = self.subtree_formula_id(node)
+
+        for model in self.model_list_of(node):
+            self.print_proof_line("m", claim_id, *model)
 
     def print_leaf_claim_of(self, node):
         claim_id = self.subtree_formula_id(node)
-        q = self.model_claim_query_of(node)
 
-        for model in self.db.exec_and_fetchall(sql.SQL(q)):
-            # last is model count column
-            model = list(model)[:-1]
-            self.print_proof_line("l", claim_id, 1, *[v if model[node.vertices.index(v)] else -v for v in node.vertices])
+        for model in self.model_list_of(node):
+            self.print_proof_line("l", claim_id, 1, *model)
+
+    def print_join_leaf(self, node):
+        claim_id = self.subtree_formula_id(node)
+        pseudo_id = self.issue_pseudo_id()
+
+        clauses = covering_clauses(node.vertices, self.var_clause_dict)
+        lc = [self.clause_index_dict[c] for c in clauses]
+        self.print_proof_line("d", pseudo_id, *sorted(node.vertices), 0, *sorted(lc))
+        self.print_proof_line("ml", pseudo_id, pseudo_id, *sorted(node.vertices), 0, *sorted(lc), 0)
+        self.print_proof_line("jl", pseudo_id, claim_id)
+
+        for model in self.model_list_of(node):
+            self.print_proof_line("m", pseudo_id, *model)
+            self.print_proof_line("l", pseudo_id, 1, *model)
 
     def print_extension_claim_of(self, node):
         list_id = self.subtree_formula_id(node)
@@ -147,28 +164,31 @@ class SharpSat(Problem):
         q = "{} {}".format(self.assignment_select(node, do_projection=False), self.filter(node))
         q = self.db.replace_dynamic_tabs(q)
 
-        models = set()
+        extended_models = []
         # fixme: inefficient
         for model in self.db.exec_and_fetchall(sql.SQL(q)):
             lm = list(model)
             int_mod = [var if v else -var for v, var in zip(lm[:-1], node.vertices)]
             self.print_proof_line("e", list_id, child_id, lm[-1], *int_mod)
-            models.add(frozenset(int_mod))
+            extended_models.append(int_mod)
 
-        q = self.model_claim_query_of(node)
-        for model in self.db.exec_and_fetchall(sql.SQL(q)):
-            # last is model count column
-            lm = list(model)[:-1]
-            int_mod = [var if v else -var for v, var in zip(lm, node.vertices)]
-            if not frozenset(int_mod) in models:
-                self.print_proof_line("e", list_id, child_id, 0, *int_mod)
+        for model in self.model_list_of(node):
+            if not model in extended_models:
+                self.print_proof_line("e", list_id, child_id, 0, *model)
 
     def print_projection_claim_of(self, node, formula_id):
         partial_assignment = node.stored_vertices
+
+        projection_sum = 0
         for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
             lm = list(model)
             int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
             self.print_proof_line("a", formula_id, lm[0], *int_mod)
+            projection_sum += lm[0]
+
+        if node.stored_vertices:
+            # make a composition claim containing the whole bag
+            self.print_proof_line("a", formula_id, projection_sum, *[])
 
     def print_model_claims(self):
         for node in self.td.nodes:
@@ -202,20 +222,47 @@ class SharpSat(Problem):
                 child_clauses = []
                 for child in node.children:
                     child_clauses.extend(covering_clauses(set(child.vertices), self.var_clause_dict))
-                missing_clauses = covering_clauses(set(node.vertices), self.var_clause_dict) - set(child_clauses)
 
+                missing_clauses = covering_clauses(set(node.vertices), self.var_clause_dict) - set(child_clauses)
                 introduce_vars = set(node.vertices) - set(child_vars)
+
+                if missing_clauses or introduce_vars:
+                    self.print_join_leaf(node)
+
 
                 self.print_model_claim_of(node)
 
                 print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
-                partial_assignment = node.stored_vertices
-                for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
-                    formula_id = self.subtree_formula_id(node)
+                formula_id = self.subtree_formula_id(node)
+
+                # join claims
+                nonzero = []
+                q = "{} {}".format(self.assignment_select(node, do_projection=False), self.filter(node))
+                q = self.db.replace_dynamic_tabs(q)
+                for model in self.db.exec_and_fetchall(sql.SQL(q)):
                     lm = list(model)
-                    int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
-                    self.print_proof_line("j", formula_id, lm[0], *int_mod)
+                    int_mod = [var if v else -var for v, var in zip(lm[:-1], node.vertices)]
+                    self.print_proof_line("j", formula_id, lm[-1], *int_mod)
+                    nonzero.append(int_mod)
+
+                # projection
+                if node.stored_vertices != node.vertices:
+                    for model in self.model_list_of(node):
+                        if model not in nonzero:
+                            self.print_proof_line("j", formula_id, 0, *model)
+
+                    partial_assignment = node.stored_vertices
+                    projection_sum = 0
+                    for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
+                        formula_id = self.subtree_formula_id(node)
+                        lm = list(model)
+                        int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
+                        self.print_proof_line("a", formula_id, lm[0], *int_mod)
+                        projection_sum += lm[0]
+
+                    # make a composition claim containing the whole bag
+                    self.print_proof_line("a", formula_id, projection_sum, *[])
 
     def after_solve(self):
         self.print_model_claims()
@@ -224,7 +271,7 @@ class SharpSat(Problem):
         self.db.ignore_next_praefix()
         model_count = self.db.update("problem_sharpsat",["model_count"],[sum_count],[f"ID = {self.id}"],"model_count")[0]
         print ("c root component: ", self.td.root.id)
-        self.print_proof_line("j", self.td.root.id, model_count, *[])
+        self.print_proof_line("a", self.td.root.id, model_count, *[])
         logger.info("Problem has %d models", model_count)
 
 def var2cnt(node,var):
