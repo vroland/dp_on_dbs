@@ -64,8 +64,8 @@ class SharpSat(Problem):
         print("\nc", "bag", "formula for", node.id)
         self.print_proof_line("d", id, *sorted(recursive_vertice_set), 0, *sorted(recursive_clause_idx))
         self.print_proof_line("ml", id, id, *sorted(local_vertice_set), 0, *sorted(local_clause_idx), 0)
-        if node.parent:
-            self.print_proof_line("jl", id, self.subtree_formula_id(node.parent))
+        for child in node.children:
+            self.print_proof_line("jl", self.subtree_formula_id(child), id)
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -73,7 +73,7 @@ class SharpSat(Problem):
 
     def print_define_clauses(self):
 
-        self.print_proof_line("p", self.num_vars, len(self.clauses))
+        self.print_proof_line("p", "st", self.num_vars, len(self.clauses))
 
         # define clauses
         for id, c in enumerate(self.clauses):
@@ -117,10 +117,7 @@ class SharpSat(Problem):
         insert_data()
 
     def model_claim_query_of(self, node):
-        pseudo_leaf = Node(node.id, node.vertices)
-        pseudo_leaf.parent = node.parent
-
-        q = "{} {}".format(self.assignment_select(pseudo_leaf, do_projection=False), self.filter(node))
+        q = "{} {}".format(self.assignment_select(node, do_projection=False), self.filter(node))
         return self.db.replace_dynamic_tabs(q)
 
     def model_list_of(self, node):
@@ -147,6 +144,9 @@ class SharpSat(Problem):
     def print_join_leaf(self, node):
         claim_id = self.subtree_formula_id(node)
         pseudo_id = self.issue_pseudo_id()
+        pseudo_leaf = Node(node.id, node.vertices)
+        pseudo_leaf.parent = node.parent
+        print("c introduce join leaf id ", pseudo_id, "for", claim_id);
 
         clauses = covering_clauses(node.vertices, self.var_clause_dict)
         lc = [self.clause_index_dict[c] for c in clauses]
@@ -154,7 +154,7 @@ class SharpSat(Problem):
         self.print_proof_line("ml", pseudo_id, pseudo_id, *sorted(node.vertices), 0, *sorted(lc), 0)
         self.print_proof_line("jl", pseudo_id, claim_id)
 
-        for model in self.model_list_of(node):
+        for model in self.model_list_of(pseudo_leaf):
             self.print_proof_line("m", pseudo_id, *model)
             self.print_proof_line("l", pseudo_id, 1, *model)
 
