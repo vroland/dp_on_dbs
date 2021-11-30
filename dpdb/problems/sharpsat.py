@@ -59,13 +59,12 @@ class SharpSat(Problem):
         recursive_clauses = covering_clauses(recursive_vertice_set, self.var_clause_dict)
         recursive_clause_idx = [self.clause_index_dict[c] for c in recursive_clauses]
         local_clauses = covering_clauses(local_vertice_set, self.var_clause_dict)
-        local_clause_idx = [self.clause_index_dict[c] for c in local_clauses]
 
         print("\nc", "bag", "formula for", node.id)
         self.print_proof_line("d", id, *sorted(recursive_vertice_set), 0, *sorted(recursive_clause_idx))
-        self.print_proof_line("ml", id, id, *sorted(local_vertice_set), 0, *sorted(local_clause_idx), 0)
+        self.print_proof_line("ps", id, id, *sorted(local_vertice_set), 0)
         for child in node.children:
-            self.print_proof_line("jl", self.subtree_formula_id(child), id)
+            self.print_proof_line("jc", self.subtree_formula_id(child), id)
 
     def filter(self,node):
         #print (self.var_clause_dict, node.id)
@@ -133,13 +132,13 @@ class SharpSat(Problem):
         claim_id = self.subtree_formula_id(node)
 
         for model in self.model_list_of(node):
-            self.print_proof_line("m", claim_id, *model)
+            self.print_proof_line("pa", claim_id, *model)
 
     def print_leaf_claim_of(self, node):
         claim_id = self.subtree_formula_id(node)
 
         for model in self.model_list_of(node):
-            self.print_proof_line("l", claim_id, 1, *model)
+            self.print_proof_line("m", claim_id, 1, *model)
 
     def print_join_leaf(self, node):
         claim_id = self.subtree_formula_id(node)
@@ -151,12 +150,12 @@ class SharpSat(Problem):
         clauses = covering_clauses(node.vertices, self.var_clause_dict)
         lc = [self.clause_index_dict[c] for c in clauses]
         self.print_proof_line("d", pseudo_id, *sorted(node.vertices), 0, *sorted(lc))
-        self.print_proof_line("ml", pseudo_id, pseudo_id, *sorted(node.vertices), 0, *sorted(lc), 0)
-        self.print_proof_line("jl", pseudo_id, claim_id)
+        self.print_proof_line("ps", pseudo_id, pseudo_id, *sorted(node.vertices), 0)
+        self.print_proof_line("jc", pseudo_id, claim_id)
 
         for model in self.model_list_of(pseudo_leaf):
-            self.print_proof_line("m", pseudo_id, *model)
-            self.print_proof_line("l", pseudo_id, 1, *model)
+            self.print_proof_line("pa", pseudo_id, *model)
+            self.print_proof_line("m", pseudo_id, 1, *model)
 
     def print_extension_claim_of(self, node):
         list_id = self.subtree_formula_id(node)
