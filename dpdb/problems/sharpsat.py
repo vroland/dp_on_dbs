@@ -2,6 +2,7 @@
 import logging
 import sys
 from collections import defaultdict
+import subprocess
 
 from dpdb.reader import CnfReader
 from dpdb.problem import *
@@ -48,10 +49,16 @@ class SharpSat(Problem):
         l = [l_type, *data, 0]
         print(" ".join(map(str, l)))
 
-    def print_component_def(self, id, node):
+    def vertices_recursive(self, node):
         recursive_vertices = []
         for n in node.children_recursive:
             recursive_vertices.extend(n.vertices)
+
+        return recursive_vertices
+
+    def print_component_def(self, id, node):
+
+        recursive_vertices = self.vertices_recursive(node)
 
         recursive_vertice_set = set(recursive_vertices)
         local_vertice_set = set(node.vertices)
@@ -62,7 +69,6 @@ class SharpSat(Problem):
 
         print("\nc", "bag", "formula for", node.id)
         self.print_proof_line("d", id, *sorted(recursive_vertice_set), 0, *sorted(recursive_clause_idx))
-        self.print_proof_line("ps", id, id, *sorted(local_vertice_set), 0)
         for child in node.children:
             self.print_proof_line("jc", self.subtree_formula_id(child), id)
 
@@ -128,17 +134,43 @@ class SharpSat(Problem):
             models.append([v if model[node.vertices.index(v)] else -v for v in node.vertices])
         return models
 
-    def print_model_claim_of(self, node):
-        claim_id = self.subtree_formula_id(node)
-
-        for model in self.model_list_of(node):
-            self.print_proof_line("pa", claim_id, *model)
-
     def print_leaf_claim_of(self, node):
         claim_id = self.subtree_formula_id(node)
 
+        claims = []
         for model in self.model_list_of(node):
             self.print_proof_line("m", claim_id, 1, *model)
+            claims.append(model)
+        return claims
+
+    def unsatisfiability_proof(self, node, claims):
+        #variable_mapping = { v : i + 1 for i, v in enumerate(variables)}
+
+        variables = self.vertices_recursive(node)
+        clauses = covering_clauses(variables, self.var_clause_dict)
+        problem_string = " ".join(map(str, ["p", "cnf", max(variables), len(clauses) + len(claims)])) + "\n"
+        for clause in clauses:
+            problem_string += " ".join(map(str, [l for l in clause if abs(l) in variables] + [0])) + "\n"
+
+        for clause in claims:
+            problem_string += " ".join(map(str, [-l for l in clause] + [0])) + "\n"
+
+        result = subprocess.run(["./minisat", "-verb=0", "/dev/stdin", "/dev/stderr"], input=problem_string, capture_output=True, encoding="utf-8")
+        last_line = result.stdout.strip().split("\n")[-1].strip()
+        if not last_line == "UNSATISFIABLE":
+            print ("proof failed:", node.id, file=sys.stderr)
+            print (problem_string)
+            print (result.stderr)
+            assert False
+
+        proof = []
+        for l in result.stderr.strip().split("\n"):
+            l = l.strip()
+            if l[0] == "d" or l[-1] != "0":
+                continue
+            proof.append(list(map(int, l.split(" ")))[:-1])
+
+        return proof
 
     def print_join_leaf(self, node):
         claim_id = self.subtree_formula_id(node)
@@ -150,11 +182,9 @@ class SharpSat(Problem):
         clauses = covering_clauses(node.vertices, self.var_clause_dict)
         lc = [self.clause_index_dict[c] for c in clauses]
         self.print_proof_line("d", pseudo_id, *sorted(node.vertices), 0, *sorted(lc))
-        self.print_proof_line("ps", pseudo_id, pseudo_id, *sorted(node.vertices), 0)
         self.print_proof_line("jc", pseudo_id, claim_id)
 
         for model in self.model_list_of(pseudo_leaf):
-            self.print_proof_line("pa", pseudo_id, *model)
             self.print_proof_line("m", pseudo_id, 1, *model)
 
     def print_extension_claim_of(self, node):
@@ -175,13 +205,18 @@ class SharpSat(Problem):
             if not model in extended_models:
                 self.print_proof_line("e", list_id, child_id, 0, *model)
 
+        return extended_models
+
     def print_projection_claim_of(self, node, formula_id):
         partial_assignment = node.stored_vertices
+
+        self.print_proof_line("xf", formula_id, *node.vertices, 0, *[])
 
         projection_sum = 0
         for model in self.db.select(node2tab(node), ["model_count"] + [var2col(v) for v in partial_assignment], fetchall=True):
             lm = list(model)
             int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
+
             self.print_proof_line("a", formula_id, lm[0], *int_mod)
             projection_sum += lm[0]
 
@@ -194,23 +229,29 @@ class SharpSat(Problem):
             val_names = {True: "t", False: "f"}
 
             num_children = len(node.children)
+            formula_id = self.subtree_formula_id(node)
 
-            self.print_component_def(self.subtree_formula_id(node), node)
+            self.print_component_def(formula_id, node)
             #self.print_component_def(self.subtree_formula_id(node), node, recursive=True)
 
             # IF / leaf
             if num_children <= 1:
-                self.print_model_claim_of(node)
+                claims = []
                 if num_children == 1:
                     print ("c", "I/F node", node.id, "is parent of", node.children[0].id)
-                    self.print_extension_claim_of(node)
+                    claims = self.print_extension_claim_of(node)
                 elif num_children == 0:
                     print ("c", "Leaf Node")
-                    self.print_leaf_claim_of(node)
+                    claims = self.print_leaf_claim_of(node)
+
+                proof = self.unsatisfiability_proof(node, claims)
+                self.print_proof_line("xp", formula_id, formula_id)
+                for step in proof:
+                    self.print_proof_line("xs", formula_id, *step)
 
                 # we need a projection claim as well
                 if set(node.vertices) != set(node.stored_vertices):
-                    self.print_projection_claim_of(node, self.subtree_formula_id(node))
+                    self.print_projection_claim_of(node, formula_id)
 
             # Join Node
             elif num_children > 1:
@@ -229,11 +270,8 @@ class SharpSat(Problem):
                     self.print_join_leaf(node)
 
 
-                self.print_model_claim_of(node)
-
                 print ("c", node.id, "join of", [self.subtree_formula_id(n) for n in node.children])
                 print ("c", "join projection", node.id, node.vertices, node.stored_vertices)
-                formula_id = self.subtree_formula_id(node)
 
                 # join claims
                 nonzero = []
@@ -245,11 +283,18 @@ class SharpSat(Problem):
                     self.print_proof_line("j", formula_id, lm[-1], *int_mod)
                     nonzero.append(int_mod)
 
+                proof = self.unsatisfiability_proof(node, nonzero)
+                self.print_proof_line("xp", formula_id, formula_id)
+                for step in proof:
+                    self.print_proof_line("xs", formula_id, *step)
+
                 # projection
                 if node.stored_vertices != node.vertices:
                     for model in self.model_list_of(node):
                         if model not in nonzero:
                             self.print_proof_line("j", formula_id, 0, *model)
+
+                    self.print_proof_line("xf", formula_id, *node.vertices, 0, *[])
 
                     partial_assignment = node.stored_vertices
                     projection_sum = 0
@@ -257,6 +302,7 @@ class SharpSat(Problem):
                         formula_id = self.subtree_formula_id(node)
                         lm = list(model)
                         int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
+
                         self.print_proof_line("a", formula_id, lm[0], *int_mod)
                         projection_sum += lm[0]
 
@@ -270,6 +316,7 @@ class SharpSat(Problem):
         self.db.ignore_next_praefix()
         model_count = self.db.update("problem_sharpsat",["model_count"],[sum_count],[f"ID = {self.id}"],"model_count")[0]
         print ("c root component: ", self.td.root.id)
+        self.print_proof_line("xf", self.td.root.id, *self.td.root.vertices, 0, *[])
         self.print_proof_line("a", self.td.root.id, model_count, *[])
         logger.info("Problem has %d models", model_count)
 

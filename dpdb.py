@@ -121,7 +121,7 @@ if __name__ == "__main__":
             p.add_argument(arg,**kwargs)
 
     parser.add_argument("-f", "--file", dest="file", help="Input file for the problem to solve", required=True)
-    
+
     # general options
     gen_opts = parser.add_argument_group("general options", "General options")
     gen_opts.add_argument("-t", dest="type", help="type of the cluster run", default="")
