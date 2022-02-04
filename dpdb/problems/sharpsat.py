@@ -307,7 +307,8 @@ class SharpSat(Problem):
                         projection_sum += lm[0]
 
                     # make a composition claim containing the whole bag
-                    self.print_proof_line("a", formula_id, projection_sum, *[])
+                    if node.stored_vertices:
+                        self.print_proof_line("a", formula_id, projection_sum, *[])
 
     def after_solve(self):
         self.print_model_claims()
