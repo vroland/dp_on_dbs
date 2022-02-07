@@ -198,7 +198,7 @@ class SharpSat(Problem):
         for model in self.db.exec_and_fetchall(sql.SQL(q)):
             lm = list(model)
             int_mod = [var if v else -var for v, var in zip(lm[:-1], node.vertices)]
-            self.print_proof_line("e", list_id, child_id, lm[-1], *int_mod)
+            self.print_proof_line("e", list_id, child_id, int(lm[-1]), *int_mod)
             extended_models.append(int_mod)
 
         for model in self.model_list_of(node):
@@ -217,12 +217,12 @@ class SharpSat(Problem):
             lm = list(model)
             int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
 
-            self.print_proof_line("a", formula_id, lm[0], *int_mod)
-            projection_sum += lm[0]
+            self.print_proof_line("a", formula_id, int(lm[0]), *int_mod)
+            projection_sum += int(lm[0])
 
         if node.stored_vertices:
             # make a composition claim containing the whole bag
-            self.print_proof_line("a", formula_id, projection_sum, *[])
+            self.print_proof_line("a", formula_id, int(projection_sum), *[])
 
     def print_model_claims(self):
         for node in self.td.nodes:
@@ -280,7 +280,7 @@ class SharpSat(Problem):
                 for model in self.db.exec_and_fetchall(sql.SQL(q)):
                     lm = list(model)
                     int_mod = [var if v else -var for v, var in zip(lm[:-1], node.vertices)]
-                    self.print_proof_line("j", formula_id, lm[-1], *int_mod)
+                    self.print_proof_line("j", formula_id, int(lm[-1]), *int_mod)
                     nonzero.append(int_mod)
 
                 proof = self.unsatisfiability_proof(node, nonzero)
@@ -303,12 +303,12 @@ class SharpSat(Problem):
                         lm = list(model)
                         int_mod = [var if v else -var for v, var in zip(lm[1:], node.stored_vertices)]
 
-                        self.print_proof_line("a", formula_id, lm[0], *int_mod)
-                        projection_sum += lm[0]
+                        self.print_proof_line("a", formula_id, int(lm[0]), *int_mod)
+                        projection_sum += int(lm[0])
 
                     # make a composition claim containing the whole bag
                     if node.stored_vertices:
-                        self.print_proof_line("a", formula_id, projection_sum, *[])
+                        self.print_proof_line("a", formula_id, int(projection_sum), *[])
 
     def after_solve(self):
         self.print_model_claims()
@@ -318,7 +318,7 @@ class SharpSat(Problem):
         model_count = self.db.update("problem_sharpsat",["model_count"],[sum_count],[f"ID = {self.id}"],"model_count")[0]
         print ("c root component: ", self.td.root.id)
         self.print_proof_line("xf", self.td.root.id, *self.td.root.vertices, 0, *[])
-        self.print_proof_line("a", self.td.root.id, model_count, *[])
+        self.print_proof_line("a", self.td.root.id, int(model_count), *[])
         logger.info("Problem has %d models", model_count)
 
 def var2cnt(node,var):
