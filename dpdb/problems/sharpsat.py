@@ -201,10 +201,6 @@ class SharpSat(Problem):
             self.print_proof_line("e", list_id, child_id, int(lm[-1]), *int_mod)
             extended_models.append(int_mod)
 
-        for model in self.model_list_of(node):
-            if not model in extended_models:
-                self.print_proof_line("e", list_id, child_id, 0, *model)
-
         return extended_models
 
     def print_projection_claim_of(self, node, formula_id):
@@ -290,10 +286,6 @@ class SharpSat(Problem):
 
                 # projection
                 if node.stored_vertices != node.vertices:
-                    for model in self.model_list_of(node):
-                        if model not in nonzero:
-                            self.print_proof_line("j", formula_id, 0, *model)
-
                     self.print_proof_line("xf", formula_id, *node.vertices, 0, *[])
 
                     partial_assignment = node.stored_vertices
