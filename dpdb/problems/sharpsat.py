@@ -50,11 +50,13 @@ class SharpSat(Problem):
         print(" ".join(map(str, l)))
 
     def vertices_recursive(self, node):
-        recursive_vertices = []
-        for n in node.children_recursive:
-            recursive_vertices.extend(n.vertices)
-
-        return recursive_vertices
+        stack = [node]
+        verts = set()
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            verts.update(n.vertices)
+        return verts
 
     def print_component_def(self, id, node):
 
